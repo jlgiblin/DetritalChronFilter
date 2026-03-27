@@ -1,0 +1,68 @@
+# ============================================================
+# DetritalThermoFilter — .gitignore
+# Files and folders listed here are ignored by GitHub.
+# They stay on your computer but are never uploaded.
+# ============================================================
+# ---- Old drafts / scratch files ----
+OldDrafts/
+TextDrafts/
+
+# ---- Data folders ----
+Catchments/
+Catchments_*/
+Output/
+Output_*/
+FilteredOutputs/
+ZPb_QA
+
+# ---- Data files ----
+# Raw and processed CSVs (your actual data)
+*.csv
+
+# ---- MATLAB generated files ----
+# Figures saved as files
+*.fig
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.pdf
+
+# MATLAB compiled files
+*.mex*
+*.asv          # autosave files MATLAB creates silently
+*.m~
+
+# ---- OS junk ----
+# Mac
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ============================================================
+# EXCEPTIONS — files to include even if matched above
+# ============================================================
+
+# Keep the example CSVs if you generate and commit them
+# (uncomment the lines below if you want to include example data)
+# !example/Catchments_example/**/*.csv
+# !example/Output_example/**/summary_counts.csv
+
+# Personal data and output folders
+Catchments/
+Catchments_example/
+Output_Pecube/
+Output_QTQt/
+OldDrafts/
+DraftV2/
+TextDrafts/
+Docs/
+~$*
