@@ -1,26 +1,27 @@
 function generate_synthetic_data(outdir)
 % GENERATE_SYNTHETIC_DATA
-% Creates three synthetic catchment datasets for testing DetritalThermoFilter.
+% Creates three synthetic catchment datasets for testing DetritalChronFilter.
 %
-% Each catchment has a known youngest magmatic pulse (defined by mu and
-% sigma) and a mix of grains designed to exercise all classification paths:
-%   - keep_exhumation : post-magmatic cooling with long lag
-%   - exclude_legacy  : cooling ages older than the pulse window
-%   - flag_magmatic   : crystallization-cooling lag shorter than Delta (8 Ma)
-%   - flag_discordant : He age nominally older than U-Pb age within 2-sigma
+% Each catchment has a known youngest target component (defined by mu and
+% sigma) and a mix of grains designed to exercise all screening paths:
+%   - eligible_after_reference_screen
+%   - older_than_reference
+%   - short_crystallization_cooling_interval
+%   - age_order_unresolved
 %
-% With the default gmm_ci BoundsMethod and NSigma=1.0, the expected pulse
-% windows (mu +/- 1*sigma) are:
+% With the default gmm_sigma_window BoundsMethod and NSigma=1.0, the expected
+% target-component windows (mu +/- 1*sigma) are:
 %   CatchmentA: ~85–95 Ma  (mu=90, sigma=5)
 %   CatchmentB: ~69–81 Ma  (mu=75, sigma=6)
 %   CatchmentC: ~93–107 Ma (mu=100, sigma=7)
 %
 % Usage:
-%   generate_synthetic_data              % writes to Catchments_example/
+%   generate_synthetic_data              % writes to inputs_generated/
 %   generate_synthetic_data("my_dir")    % writes to my_dir/
 
 if nargin < 1 || isempty(outdir)
-    outdir = "Catchments_example";
+    example_dir = string(fileparts(mfilename("fullpath")));
+    outdir = fullfile(example_dir, "inputs_generated");
 end
 
 rng(42);  % reproducible
@@ -32,7 +33,7 @@ catchments = struct();
 catchments(1).name         = "CatchmentA";
 catchments(1).pulse_mu     = 90;    % Ma — youngest pulse mean
 catchments(1).pulse_sig    = 5;     % Ma — pulse width
-catchments(1).older_mus    = [140, 200];  % older magmatic populations
+catchments(1).older_mus    = [140, 200];  % older zircon U-Pb components
 catchments(1).older_sigs   = [10, 15];
 catchments(1).older_weights = [0.35, 0.25];  % fraction of ZPb grains
 catchments(1).young_weight  = 0.40;
@@ -75,7 +76,7 @@ for ci = 1:numel(catchments)
     zpb_errs = [];
     for k = 1:numel(mus)
         ages_k = mus(k) + sigs(k) .* randn(ns(k), 1);
-        errs_k = max(1, sigs(k)*0.3 + 0.5*randn(ns(k),1));  % ~30% of sigma as 2sig err
+        errs_k = max(1, sigs(k)*0.3 + 0.5*randn(ns(k),1));  % generated as 2σ for continuity
         zpb_ages = [zpb_ages; ages_k]; %#ok<AGROW>
         zpb_errs = [zpb_errs; errs_k]; %#ok<AGROW>
     end
@@ -83,20 +84,21 @@ for ci = 1:numel(catchments)
     zpb_ages = max(10, zpb_ages);
     zpb_errs = max(0.5, zpb_errs);
 
-    T_zpb = table(zpb_ages, zpb_errs, 'VariableNames', {'ZrnPbDate','ZrnPb2sigerr'});
+    T_zpb = table(zpb_ages, zpb_errs ./ 2, ...
+        'VariableNames', {'ZrnPbDate','ZrnPb1sigerr'});
     writetable(T_zpb, fullfile(cdir, "ZrnPb.csv"));
 
     % -- Helper: make cooling ages relative to a crystallization age --
-    % post-magmatic grains: cool 20-60 Myr after youngest pulse
-    % legacy grains: cool before youngest pulse (older than Ty_hi)
-    % magmatic grains: cool within ~5 Myr of crystallization
+    % longer-interval grains: cool 20-60 Myr after the selected component
+    % older-than-reference grains: cooling ages older than Ty_hi
+    % short-interval grains: cool within about 5 Myr of crystallization
 
     N_ap  = 100;
     N_hbl = 100;
     N_zrn = 90;
 
     % ---- ApHeApPb.csv ----
-    % ~80% post-magmatic, ~10% legacy, ~10% magmatic
+    % ~80% longer interval, ~10% older than reference, ~10% short interval
     n_keep = round(0.80 * N_ap);
     n_leg  = round(0.10 * N_ap);
     n_mag  = N_ap - n_keep - n_leg;
@@ -114,8 +116,8 @@ for ci = 1:numel(catchments)
     th_all = [th_keep; th_leg; th_mag];
     tc_all = [tc_keep; tc_leg; tc_mag];
 
-    % Add a few soft-discordant grains (He nominally older than U-Pb but
-    % within 2-sigma) so flag_discordant appears in the example outputs.
+    % Add a few grains with nominally reversed age order that overlap within
+    % combined 2-sigma uncertainty so AOU appears in the example outputs.
     % These are created by making the He age slightly older than the U-Pb age
     % with realistic uncertainties so the discordance is within ~1.5 sigma.
     n_fd   = 4;
@@ -126,20 +128,20 @@ for ci = 1:numel(catchments)
     n_tot  = numel(th_all);
 
     ap_grains   = arrayfun(@(i) sprintf("Ap%03d", i), (1:n_tot)', 'UniformOutput', false);
-    ap_he_err   = max(0.5, 0.08*th_all + randn(n_tot,1));   % ~8% 2sig
-    ap_pb_err   = max(1.0, 0.05*tc_all + randn(n_tot,1));   % ~5% 2sig
+    ap_he_err   = max(0.5, 0.08*th_all + randn(n_tot,1)) ./ 2;
+    ap_pb_err   = max(1.0, 0.05*tc_all + randn(n_tot,1)) ./ 2;
 
     T_ap = table(string(ap_grains), th_all, ap_he_err, tc_all, ap_pb_err, ...
-        'VariableNames', {'ApGrain','ApHeDate','ApHe2sigerr','ApPbDate','ApPb2sigerr'});
+        'VariableNames', {'ApGrain','ApHeDate','ApHe1sigerr','ApPbDate','ApPb1sigerr'});
     writetable(T_ap, fullfile(cdir, "ApHeApPb.csv"));
 
     % ---- HblAr.csv ----
-    % Hornblende closes ~500°C — ages older than He, mix of legacy and kept
-    % ~60% post-magmatic (cooling age within or after pulse), ~40% legacy
+    % Hornblende ages span the reference: about 60% younger than the older
+    % boundary and about 40% older than it.
     n_keep_hbl = round(0.60 * N_hbl);
     n_leg_hbl  = N_hbl - n_keep_hbl;
 
-    % Hbl cooling ages: post-magmatic = near or just below pulse upper bound
+    % Hbl cooling ages include values near or younger than the upper bound.
     th_hbl_keep = (Ty_hi - 5) - 15*rand(n_keep_hbl, 1);   % just below Ty_hi
     th_hbl_leg  = Ty_hi + 2  + 30*rand(n_leg_hbl, 1);      % above Ty_hi
 
@@ -154,7 +156,7 @@ for ci = 1:numel(catchments)
     writetable(T_hbl, fullfile(cdir, "HblAr.csv"));
 
     % ---- ZrnHeZrnPb.csv ----
-    % ~75% post-magmatic, ~15% magmatic, ~10% legacy
+    % ~75% longer interval, ~15% short interval, ~10% older than reference
     n_keep_z = round(0.75 * N_zrn);
     n_mag_z  = round(0.15 * N_zrn);
     n_leg_z  = N_zrn - n_keep_z - n_mag_z;
@@ -165,21 +167,21 @@ for ci = 1:numel(catchments)
 
     th_zkeep = tc_zkeep - (15 + 35*rand(n_keep_z, 1));   % 15-50 Myr lag
     th_zmag  = tc_zmag  - (2 + 10*rand(n_mag_z, 1));  % 2-12 Myr (straddles Delta=8)
-    th_zleg  = Ty_hi + 5 + 20*rand(n_leg_z, 1);          % legacy
+    th_zleg  = Ty_hi + 5 + 20*rand(n_leg_z, 1);          % older than reference
 
     th_z = [th_zkeep; th_zmag; th_zleg];
     tc_z = [tc_zkeep; tc_zmag; tc_zleg];
     n_z  = numel(th_z);
 
     zrn_grains  = arrayfun(@(i) sprintf("Zrn%03d", i), (1:n_z)', 'UniformOutput', false);
-    zhe_err     = max(0.5, 0.07*th_z + randn(n_z,1));
-    zpb_err_dd  = max(1.0, 0.04*tc_z + randn(n_z,1));
+    zhe_err     = max(0.5, 0.07*th_z + randn(n_z,1)) ./ 2;
+    zpb_err_dd  = max(1.0, 0.04*tc_z + randn(n_z,1)) ./ 2;
 
     T_zrn = table(string(zrn_grains), th_z, zhe_err, tc_z, zpb_err_dd, ...
-        'VariableNames', {'ZrnGrain','ZrnHeDate','ZrnHe2sigerr','ZrnPbDate','ZrnPb2sigerr'});
+        'VariableNames', {'ZrnGrain','ZrnHeDate','ZrnHe1sigerr','ZrnPbDate','ZrnPb1sigerr'});
     writetable(T_zrn, fullfile(cdir, "ZrnHeZrnPb.csv"));
 
-    fprintf("Generated synthetic data for %s  (pulse mu=%.0f Ma, sigma=%.0f Ma, gmm_ci window: ~%.0f-%.0f Ma)\n", ...
+    fprintf("Generated synthetic data for %s  (component mu=%.0f Ma, sigma=%.0f Ma, sigma window: ~%.0f-%.0f Ma)\n", ...
         c.name, c.pulse_mu, c.pulse_sig, c.pulse_mu - c.pulse_sig, c.pulse_mu + c.pulse_sig);
 end
 

@@ -3,6 +3,8 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 % Discovers all catchment subfolders under catchments_root, runs
 % infer_youngest_pulse_from_ZPb then filter_detrital_thermo for each,
 % and writes cross-catchment summary and sensitivity CSVs.
+% Public outputs use observation-based screening terminology. Geological
+% interpretations remain separate from the computed classifications.
 %
 % Expected file layout (names fixed per catchment):
 %   <catchments_root>/<CatchmentName>/ZrnPb.csv
@@ -14,28 +16,25 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 % OUTPUT FOLDER STRUCTURE
 % -----------------------------------------------------------------------
 %   <outdir_root>/
-%     README.txt                    — guide to all outputs and reason codes
-%     _pipeline_summary/
-%       pipeline_summary.csv        — pulse window + GMM stats per catchment
-%       sensitivity_by_system.csv   — keep_exhumation N under standard vs
-%                                     conservative vs midpoint (if run_sensitivity)
+%     README.txt
+%     pipeline_summary.csv          — target-component window + GMM statistics
+%     output_summary.csv            — counts by catchment, chronometer, action
+%     filter_code_lookup.csv        — code definitions written once per run
 %     <CatchmentName>/
-%       ZPb_QA/                     — GMM QA plots for pulse inference
-%       standard/                   — filtered outputs using standard mode
-%         kept_strict.csv           *** PRIMARY USE FILE ***
-%         kept_plus_flagged.csv
-%         all_data_classified.csv
-%         excluded_legacy.csv
-%         discordant.csv
-%         flag_discordant.csv
-%         indeterminate.csv
-%         summary_counts.csv
-%       conservative/               — same outputs, conservative mode
-%       midpoint/                   — same outputs, midpoint mode
+%       youngest_zircon_component/  — GMM plot and component summary
+%       filter_output/              — older-bound reference (default)
+%         filter_results_full.csv   — complete one-date-per-row review table
+%         filter_results_coded.csv  — compact table using numeric lookup IDs
+%         model_input_ages.csv      — eligible dates for downstream models
+%         excluded_ages.csv         — only dates recommended for exclusion
+%         review_flags.csv          — dates carrying a separate review flag
+%         output_summary.csv        — catchment-level counts
+%       sensitivity/                — only when run_sensitivity=true
+%         reference_boundary_comparison.csv
+%     reference_boundary_sensitivity_summary.csv — when run_sensitivity=true
 %
-% The standard/kept_strict.csv file is the recommended input to TSF
-% and Pecube workflows. The conservative/ and midpoint/ folders exist
-% for sensitivity testing only and are not used in primary analysis.
+% Only older-than-reference results are recommended for exclusion. Review
+% flags do not remove rows from model_input_ages.csv.
 %
 % -----------------------------------------------------------------------
 % USAGE
@@ -50,22 +49,25 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 %   K_override      if >0, use this K for ALL catchments (skip BIC)
 %   K_override_map  containers.Map of catchment name -> K override
 %                   e.g. containers.Map({"TC","RC"},{3,4})
-%   Delta           magmatic lag window in Ma (default 8)
-%                   Increase to flag more grains as magmatic
-%   P_thresh        probability threshold for exclusion/flagging (default 0.65)
-%                   Lower = stricter filter; P_thresh > 0.75 triggers a warning
+%   Delta           short crystallization-to-cooling interval threshold
+%   P_thresh        screening decision probability (default 0.65)
 %   Nmc             Monte Carlo draws per grain for ZPb GMM (default 50)
-%   run_sensitivity true (default): runs standard + conservative + midpoint
-%                   modes and writes sensitivity_by_system.csv.
-%                   false: runs standard mode only (faster).
+%   TargetComponentAgeRange  allowed range for the selected GMM component
+%                   mean (default [-Inf Inf]; e.g. [70 300] Ma). The GMM
+%                   still fits the full distribution. PulseAgeRange is a
+%                   deprecated compatibility alias.
+%   run_sensitivity false (default): writes the primary older-bound result.
+%                   true: also evaluates younger-bound and midpoint choices,
+%                   but condenses them into one comparison table rather than
+%                   creating two additional result-folder trees.
 %
 % -----------------------------------------------------------------------
 % FILTER KNOBS — quick reference
 % -----------------------------------------------------------------------
 %   Parameter        Default   Tighter        Effect of tightening
 %   P_thresh         0.65      0.50           Fewer borderline grains pass
-%   Delta            8 Ma      12-15 Ma       More grains flagged magmatic
-%   P_legacy_mode    standard  conservative   More grains excluded as legacy
+%   Delta            8 Ma      12-15 Ma       More short intervals identified
+%   reference mode   older     younger         More grains older than reference
 
 arguments
     catchments_root  (1,1) string  = "Catchments"
@@ -73,23 +75,22 @@ arguments
     opts.Kmax             (1,1) double  = 6
     opts.K_override       (1,1) double  = 0
     opts.K_override_map                = []
-    opts.BoundsMethod     (1,1) string  = "gmm_ci"   % "gmm_ci" | "quantile"
+    opts.BoundsMethod     (1,1) string  = "gmm_sigma_window"
     opts.NSigma           (1,1) double  = 1.0        % sigma multiplier for window + model start
     opts.Delta            (1,1) double  = 8
     opts.P_thresh         (1,1) double  = 0.65
     opts.Nmc              (1,1) double  = 50
-    opts.run_sensitivity  (1,1) logical = true
+    opts.TargetComponentAgeRange (1,2) double = [NaN NaN]
+    opts.PulseAgeRange    (1,2) double  = [-Inf Inf] % deprecated alias
+    opts.run_sensitivity  (1,1) logical = false
 end
 
 if ~isfolder(catchments_root)
     error("Catchments root folder not found: %s", catchments_root);
 end
+target_age_range = resolve_target_age_range( ...
+    opts.TargetComponentAgeRange, opts.PulseAgeRange);
 if ~isfolder(outdir_root), mkdir(outdir_root); end
-
-% Summary outputs go in a dedicated subfolder so they are clearly
-% separated from per-catchment filtered data.
-summary_dir = fullfile(outdir_root, "_pipeline_summary");
-if ~isfolder(summary_dir), mkdir(summary_dir); end
 
 % Write README on every run so it stays current with the parameters used.
 write_readme(outdir_root, opts);
@@ -107,15 +108,17 @@ fprintf("Found %d catchment(s): %s\n", numel(catchment_names), ...
 
 % ---- Modes to run ----
 if opts.run_sensitivity
-    modes = ["standard", "conservative", "midpoint"];
+    modes = ["older_bound", "younger_bound", "midpoint"];
 else
-    modes = "standard";
+    modes = "older_bound";
 end
 
 % ---- Storage ----
 summary_rows = cell(numel(catchment_names), 1);
-% counts_store{i, mi} = summary_counts table for catchment i, mode mi
-counts_store = cell(numel(catchment_names), numel(modes));
+% results_store{i, mi} = one-date-per-row results for catchment i, mode mi
+results_store = cell(numel(catchment_names), numel(modes));
+output_summary_rows = cell(numel(catchment_names), 1);
+code_lookup = table();
 
 % ---- Per-catchment loop ----
 for i = 1:numel(catchment_names)
@@ -152,16 +155,17 @@ for i = 1:numel(catchment_names)
     % -- Step 1: infer youngest pulse (once per catchment, shared across modes) --
     try
         pulse_opts = {"Kmax", opts.Kmax, "Nmc", opts.Nmc, ...
-                      "BoundsMethod", opts.BoundsMethod, "NSigma", opts.NSigma};
+                      "BoundsMethod", opts.BoundsMethod, "NSigma", opts.NSigma, ...
+                      "TargetComponentAgeRange", target_age_range};
         if K_use > 0
             pulse_opts = [pulse_opts, {"K_override", K_use}]; %#ok<AGROW>
         end
         pulse = infer_youngest_pulse_from_ZPb(f_zpb, ...
-            fullfile(outdir_root, cname, "ZPb_QA"), pulse_opts{:});
-        fprintf("  Pulse window:     %.1f - %.1f Ma  (K=%d, BIC=%d)\n", ...
-            pulse.Tyoung(1), pulse.Tyoung(2), pulse.K_used, pulse.K_bic);
-        fprintf("  Model start time: %.1f +/- %.1f Ma  (mu=%.1f + %.0f*sigma=%.1f)\n", ...
-            pulse.model_start_Ma, pulse.model_start_err_Ma, ...
+            fullfile(outdir_root, cname, "youngest_zircon_component"), pulse_opts{:});
+        fprintf("  Target-component age window: %.1f - %.1f Ma  (K=%d, selection=%s)\n", ...
+            pulse.Tyoung(1), pulse.Tyoung(2), pulse.K_used, pulse.K_selection_method);
+        fprintf("  Candidate model-start age: %.1f Ma  (component mu=%.1f + %.0f*sigma; sigma=%.1f Ma)\n", ...
+            pulse.model_start_Ma, ...
             pulse.mu_young, pulse.NSigma_used, pulse.sigma_young);
     catch ME
         warning("Pulse inference failed for %s: %s", cname, ME.message);
@@ -169,36 +173,62 @@ for i = 1:numel(catchment_names)
         continue
     end
 
-    % -- Step 2: filter for each mode --
+    % -- Step 2: write the primary result and calculate optional sensitivity --
+    mode_results = cell(1, numel(modes));
     for mi = 1:numel(modes)
         mode = modes(mi);
-        cout = fullfile(outdir_root, cname, mode);
+        is_primary = mi == 1;
+        cout = fullfile(outdir_root, cname, "filter_output");
         try
-            filter_detrital_thermo(f_ar, f_ap, f_zrn, cout, pulse.Tyoung, ...
+            mode_results{mi} = filter_detrital_thermo( ...
+                f_ar, f_ap, f_zrn, cout, pulse.Tyoung, ...
                 "Delta",         opts.Delta, ...
                 "P_thresh",      opts.P_thresh, ...
-                "P_legacy_mode", mode);
+                "ReferenceMode", mode, ...
+                "WriteOutputs", is_primary, ...
+                "WriteCodeLookup", false);
 
-            % Read back summary_counts.csv for the sensitivity table
-            sc_path = fullfile(cout, "summary_counts.csv");
-            if isfile(sc_path)
-                counts_store{i, mi} = readtable(sc_path, "VariableNamingRule","preserve");
+            results_store{i, mi} = mode_results{mi}.filter_results;
+            if is_primary
+                catchment_summary = addvars( ...
+                    mode_results{mi}.output_summary, ...
+                    repmat(cname, height(mode_results{mi}.output_summary), 1), ...
+                    'Before', 1, 'NewVariableNames', 'Catchment');
+                output_summary_rows{i} = catchment_summary;
+                if isempty(code_lookup)
+                    code_lookup = mode_results{mi}.code_lookup;
+                end
             end
         catch ME
             warning("Filtering failed for %s (mode=%s): %s", cname, mode, ME.message);
         end
     end
 
+    if opts.run_sensitivity && all(~cellfun(@isempty, mode_results))
+        sensitivity_dir = fullfile(outdir_root, cname, "sensitivity");
+        if ~isfolder(sensitivity_dir), mkdir(sensitivity_dir); end
+        boundary_comparison = build_reference_boundary_comparison( ...
+            mode_results{1}.filter_results, ...
+            mode_results{2}.filter_results, ...
+            mode_results{3}.filter_results);
+        writetable(boundary_comparison, ...
+            fullfile(sensitivity_dir, "reference_boundary_comparison.csv"));
+    end
+
     % -- Collect pulse summary row --
     summary_rows{i} = table(cname, pulse.Tyoung(1), pulse.Tyoung(2), ...
         pulse.mu_young, pulse.sigma_young, pulse.weight_young, ...
-        pulse.model_start_Ma, pulse.model_start_err_Ma, pulse.NSigma_used, ...
-        string(pulse.bounds_method), pulse.K_used, pulse.K_bic, ...
+        pulse.model_start_Ma, pulse.NSigma_used, ...
+        string(pulse.bounds_method), pulse.pulse_age_range(1), ...
+        pulse.pulse_age_range(2), pulse.K_used, pulse.K_bic, ...
+        string(pulse.K_selection_method), pulse.K_override_applied, ...
         pulse.Nages, pulse.Nselected, ...
-        'VariableNames', {'Catchment','Tyoung_lo','Tyoung_hi', ...
-        'mu_young','sigma_young','weight_young', ...
-        'model_start_Ma','model_start_err_Ma','NSigma','BoundsMethod', ...
-        'K_used','K_bic_selected','N_ZPb_ages','N_ZPb_assigned'});
+        'VariableNames', {'Catchment','target_window_lo_Ma','target_window_hi_Ma', ...
+        'target_component_mean_Ma','target_component_sigma_Ma','target_component_weight', ...
+        'candidate_model_start_Ma','NSigma','BoundsMethod', ...
+        'target_component_search_lo_Ma','target_component_search_hi_Ma', ...
+        'K_used','K_bic_selected','K_selection_method','K_override_applied', ...
+        'N_ZPb_ages','N_ZPb_assigned'});
 
     fprintf("  Done.\n");
 end
@@ -207,19 +237,28 @@ end
 valid_rows = summary_rows(~cellfun(@isempty, summary_rows));
 if ~isempty(valid_rows)
     summary_tbl = vertcat(valid_rows{:});
-    writetable(summary_tbl, fullfile(summary_dir, "pipeline_summary.csv"));
+    writetable(summary_tbl, fullfile(outdir_root, "pipeline_summary.csv"));
     fprintf("\nPipeline summary written to: %s\n", ...
-        fullfile(summary_dir, "pipeline_summary.csv"));
+        fullfile(outdir_root, "pipeline_summary.csv"));
 else
     warning("No catchments processed successfully.");
     return
 end
 
+valid_output_rows = output_summary_rows(~cellfun(@isempty, output_summary_rows));
+if ~isempty(valid_output_rows)
+    writetable(vertcat(valid_output_rows{:}), ...
+        fullfile(outdir_root, "output_summary.csv"));
+end
+if ~isempty(code_lookup)
+    writetable(code_lookup, fullfile(outdir_root, "filter_code_lookup.csv"));
+end
+
 % ---- Build and write sensitivity table ----
 if opts.run_sensitivity && numel(modes) > 1
-    sens_tbl = build_sensitivity_table(catchment_names, modes, counts_store);
+    sens_tbl = build_sensitivity_table(catchment_names, modes, results_store);
     if ~isempty(sens_tbl)
-        sens_path = fullfile(summary_dir, "sensitivity_by_system.csv");
+        sens_path = fullfile(outdir_root, "reference_boundary_sensitivity_summary.csv");
         writetable(sens_tbl, sens_path);
         fprintf("Sensitivity table written to: %s\n", sens_path);
         print_sensitivity_summary(sens_tbl);
@@ -229,84 +268,107 @@ end
 end % main function
 
 % =======================================================================
+% REFERENCE-BOUNDARY COMPARISON
+% =======================================================================
+function C = build_reference_boundary_comparison(older, younger, midpoint)
+% Condense all three reference choices into one row per dated analysis.
+key_vars = {'GrainID','PairID','AnalysisID','System','Chronometer','PairRole','Age_Ma'};
+assert(height(older) == height(younger) && height(older) == height(midpoint), ...
+    "Reference-boundary result tables have different row counts.");
+for v = key_vars
+    a = older.(v{1});
+    b = younger.(v{1});
+    c = midpoint.(v{1});
+    if isnumeric(a)
+        same_b = all((a == b) | (isnan(a) & isnan(b)));
+        same_c = all((a == c) | (isnan(a) & isnan(c)));
+    else
+        same_b = isequal(string(a), string(b));
+        same_c = isequal(string(a), string(c));
+    end
+    assert(same_b && same_c, ...
+        "Reference-boundary result rows do not align for variable %s.", v{1});
+end
+
+C = older(:, {'GrainID','PairID','AnalysisID','System','Mineral', ...
+    'Chronometer','PairRole','PairStatus','Age_Ma','Age_1sigma_Ma', ...
+    'ReviewRecommended','ReviewCode'});
+
+C.PrimaryReferenceAge_Ma = older.ReferenceAge_Ma;
+C.PrimaryP_OlderThanReference = older.P_OlderThanReference;
+C.PrimaryReferenceClass = older.ReferenceClass;
+C.PrimaryAction = older.Action;
+C.PrimaryModelInclude = older.ModelInclude;
+
+C.MidpointReferenceAge_Ma = midpoint.ReferenceAge_Ma;
+C.MidpointP_OlderThanReference = midpoint.P_OlderThanReference;
+C.MidpointReferenceClass = midpoint.ReferenceClass;
+C.MidpointAction = midpoint.Action;
+C.MidpointModelInclude = midpoint.ModelInclude;
+
+C.YoungerBoundaryReferenceAge_Ma = younger.ReferenceAge_Ma;
+C.YoungerBoundaryP_OlderThanReference = younger.P_OlderThanReference;
+C.YoungerBoundaryReferenceClass = younger.ReferenceClass;
+C.YoungerBoundaryAction = younger.Action;
+C.YoungerBoundaryModelInclude = younger.ModelInclude;
+end
+
+% =======================================================================
 % SENSITIVITY TABLE BUILDER
 % =======================================================================
-function tbl = build_sensitivity_table(catchment_names, modes, counts_store)
-% For each catchment × system, extract keep_exhumation N under each mode,
-% compute absolute and % differences between standard and conservative.
+function tbl = build_sensitivity_table(catchment_names, modes, results_store)
+% For each catchment x chronometer, report the actual boundary ages and the
+% resulting number of model-input dates. No qualitative sensitivity label
+% is assigned; users see the direct numerical effect of each choice.
 
 rows = {};
 
 for i = 1:numel(catchment_names)
     cname = catchment_names(i);
 
-    % Gather all system names seen across any mode for this catchment
-    all_systems = string([]);
-    for mi = 1:numel(modes)
-        sc = counts_store{i, mi};
-        if ~isempty(sc)
-            all_systems = union(all_systems, string(sc.System));
-        end
-    end
+    primary = results_store{i, 1};
+    if isempty(primary), continue; end
+    chronometers = unique(string(primary.Chronometer), 'stable');
+    chronometers(chronometers == "ZrnUPb") = []; % reference context only
 
-    for si = 1:numel(all_systems)
-        sys = all_systems(si);
-
-        % Extract keep_exhumation N for each mode
+    for si = 1:numel(chronometers)
+        chrono = chronometers(si);
         n_vals = nan(1, numel(modes));
-        n_total = NaN;
+        boundary_vals = nan(1, numel(modes));
+        n_total = nnz(string(primary.Chronometer) == chrono);
+
         for mi = 1:numel(modes)
-            sc = counts_store{i, mi};
-            if isempty(sc), continue; end
-            sc_sys = sc(string(sc.System) == sys, :);
-            % Total N = sum across all classes for this system (from any mode)
-            if mi == 1 && ~isempty(sc_sys)
-                n_total = sum(sc_sys.N);
-            end
-            sc_keep = sc_sys(string(sc_sys.class) == "keep_exhumation", :);
-            if ~isempty(sc_keep)
-                n_vals(mi) = sc_keep.N(1);
-            else
-                % System present but zero kept grains — record as 0, not NaN
-                if ~isempty(sc_sys)
-                    n_vals(mi) = 0;
-                end
+            L = results_store{i, mi};
+            if isempty(L), continue; end
+            mask = string(L.Chronometer) == chrono;
+            if any(mask)
+                n_vals(mi) = nnz(logical(L.ModelInclude(mask)));
+                boundary_vals(mi) = L.ReferenceAge_Ma(find(mask, 1, 'first'));
             end
         end
 
-        n_std = n_vals(1);   % standard
-        n_con = n_vals(2);   % conservative
-        n_mid = n_vals(3);   % midpoint
-
-        abs_diff = n_std - n_con;
-        if isfinite(n_std) && n_std > 0
-            pct_diff = 100 * abs_diff / n_std;
-        elseif isfinite(n_std) && n_std == 0
-            pct_diff = 0;
+        n_primary = n_vals(1);      % older edge; primary result
+        n_younger = n_vals(2);      % younger edge
+        n_midpoint = n_vals(3);     % midpoint
+        primary_minus_younger = n_primary - n_younger;
+        if n_total > 0
+            primary_minus_younger_pct_total = 100 * primary_minus_younger / n_total;
         else
-            pct_diff = NaN;
-        end
-
-        % Sensitivity flag based on % difference standard vs conservative
-        if ~isfinite(pct_diff)
-            sens_flag = "indeterminate";
-        elseif abs(pct_diff) > 20
-            sens_flag = "HIGH";
-        elseif abs(pct_diff) > 5
-            sens_flag = "moderate";
-        else
-            sens_flag = "low";
+            primary_minus_younger_pct_total = NaN;
         end
 
         rows{end+1} = table( ...
-            cname, sys, n_total, ...
-            n_std, n_con, n_mid, ...
-            abs_diff, pct_diff, sens_flag, ...
+            cname, chrono, n_total, ...
+            boundary_vals(1), n_primary, ...
+            boundary_vals(3), n_midpoint, ...
+            boundary_vals(2), n_younger, ...
+            primary_minus_younger, primary_minus_younger_pct_total, ...
             'VariableNames', { ...
-                'Catchment', 'System', 'N_total_grains', ...
-                'N_keep_standard', 'N_keep_conservative', 'N_keep_midpoint', ...
-                'Diff_std_minus_con', 'PctDiff_std_minus_con', ...
-                'Sensitivity'}); %#ok<AGROW>
+                'Catchment', 'Chronometer', 'TotalDatedAnalyses', ...
+                'PrimaryOlderBoundary_Ma', 'ModelInputs_PrimaryOlderBoundary', ...
+                'MidpointBoundary_Ma', 'ModelInputs_Midpoint', ...
+                'YoungerBoundary_Ma', 'ModelInputs_YoungerBoundary', ...
+                'PrimaryMinusYounger_Count', 'PrimaryMinusYounger_PercentOfTotal'}); %#ok<AGROW>
     end
 end
 
@@ -315,18 +377,7 @@ if isempty(rows)
     return
 end
 
-tbl = vertcat(rows{:});
-
-% Sort: HIGH sensitivity first, then by catchment and system
-% Use a numeric priority key to avoid string-length sorting artifacts
-sens_priority = zeros(height(tbl), 1);
-sens_priority(tbl.Sensitivity == "HIGH")          = 1;
-sens_priority(tbl.Sensitivity == "moderate")      = 2;
-sens_priority(tbl.Sensitivity == "low")           = 3;
-sens_priority(tbl.Sensitivity == "indeterminate") = 4;
-[~, ord] = sortrows([sens_priority, double(categorical(tbl.Catchment)), ...
-                     double(categorical(tbl.System))]);
-tbl = tbl(ord, :);
+tbl = sortrows(vertcat(rows{:}), {'Catchment','Chronometer'});
 
 end
 
@@ -337,28 +388,16 @@ function print_sensitivity_summary(tbl)
 
 if isempty(tbl), return; end
 
-fprintf("\n--- Sensitivity summary (standard vs conservative) ---\n");
-fprintf("  %-10s  %-20s  %7s  %7s  %7s  %9s  %8s  %s\n", ...
-    "Catchment", "System", "N_total", "N_std", "N_con", "N_mid", "PctDiff", "Sensitivity");
-fprintf("  %s\n", repmat("-", 1, 88));
+fprintf("\n--- Reference-boundary comparison (model-input counts) ---\n");
+fprintf("  %-10s  %-12s  %7s  %9s  %9s  %9s  %9s\n", ...
+    "Catchment", "Chronometer", "N_total", "Primary", "Midpoint", "Younger", "Difference");
+fprintf("  %s\n", repmat('-', 1, 78));
 
 for r = 1:height(tbl)
-    n_mid_str = "-";
-    if isfinite(tbl.N_keep_midpoint(r))
-        n_mid_str = sprintf("%d", tbl.N_keep_midpoint(r));
-    end
-    n_tot_str = "-";
-    if isfinite(tbl.N_total_grains(r))
-        n_tot_str = sprintf("%d", tbl.N_total_grains(r));
-    end
-    pct_str = "-";
-    if isfinite(tbl.PctDiff_std_minus_con(r))
-        pct_str = sprintf("%+.1f%%", tbl.PctDiff_std_minus_con(r));
-    end
-    fprintf("  %-10s  %-20s  %7s  %7d  %7d  %9s  %8s  %s\n", ...
-        tbl.Catchment(r), tbl.System(r), n_tot_str, ...
-        tbl.N_keep_standard(r), tbl.N_keep_conservative(r), ...
-        n_mid_str, pct_str, tbl.Sensitivity(r));
+    fprintf("  %-10s  %-12s  %7d  %9d  %9d  %9d  %+9d\n", ...
+        tbl.Catchment(r), tbl.Chronometer(r), tbl.TotalDatedAnalyses(r), ...
+        tbl.ModelInputs_PrimaryOlderBoundary(r), tbl.ModelInputs_Midpoint(r), ...
+        tbl.ModelInputs_YoungerBoundary(r), tbl.PrimaryMinusYounger_Count(r));
 end
 fprintf("\n");
 
@@ -368,117 +407,131 @@ end
 % HELPERS
 % =======================================================================
 function row = make_error_row(cname)
-row = table(cname, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, "failed", NaN, NaN, NaN, NaN, ...
-    'VariableNames', {'Catchment','Tyoung_lo','Tyoung_hi', ...
-    'mu_young','sigma_young','weight_young', ...
-    'model_start_Ma','model_start_err_Ma','NSigma','BoundsMethod', ...
-    'K_used','K_bic_selected','N_ZPb_ages','N_ZPb_assigned'});
+row = table(cname, NaN, NaN, NaN, NaN, NaN, NaN, NaN, "failed", ...
+    NaN, NaN, NaN, NaN, "failed", false, NaN, NaN, ...
+    'VariableNames', {'Catchment','target_window_lo_Ma','target_window_hi_Ma', ...
+    'target_component_mean_Ma','target_component_sigma_Ma','target_component_weight', ...
+    'candidate_model_start_Ma','NSigma','BoundsMethod', ...
+    'target_component_search_lo_Ma','target_component_search_hi_Ma', ...
+    'K_used','K_bic_selected','K_selection_method','K_override_applied', ...
+    'N_ZPb_ages','N_ZPb_assigned'});
 end
 
 % =======================================================================
 % README WRITER
 % =======================================================================
 function write_readme(outdir_root, opts)
-% Writes README.txt to outdir_root explaining the folder structure,
-% which files to use, all reason codes, and the filter parameters used
-% in this run. Overwrites any previous README so it stays current.
+% Write a run-specific guide using mechanism-neutral terminology.
+target_age_range = resolve_target_age_range( ...
+    opts.TargetComponentAgeRange, opts.PulseAgeRange);
 
 fid = fopen(fullfile(outdir_root, "README.txt"), "w");
-fprintf(fid, "MultichronFitTSF — Detrital Thermochronometry Filter Output\n");
-fprintf(fid, "============================================================\n\n");
+fprintf(fid, "DetritalChronFilter — Detrital Thermochronology Screening Output\n");
+fprintf(fid, "================================================================\n\n");
 
 fprintf(fid, "Generated by run_detrital_pipeline.m\n");
-fprintf(fid, "Date: %s\n\n", datestr(now, "yyyy-mm-dd HH:MM:SS")); %#ok<TNOW1,DATST>
+fprintf(fid, "Date: %s\n", datestr(now, "yyyy-mm-dd HH:MM:SS")); %#ok<TNOW1,DATST>
+fprintf(fid, "Terminology version: neutral-v5-named-full-and-coded\n\n");
 
-fprintf(fid, "---------------------------------------------------------------\n");
+fprintf(fid, "INTERPRETATION POLICY\n");
+fprintf(fid, "---------------------\n");
+fprintf(fid, "Only a cooling age that meets the older-than-reference probability\n");
+fprintf(fid, "threshold receives an exclusion recommendation. Paired-age order and\n");
+fprintf(fid, "short-interval patterns are review flags only. They may be informative,\n");
+fprintf(fid, "but do not independently establish a thermal mechanism or bad analysis.\n\n");
+
 fprintf(fid, "WHICH FILES TO USE\n");
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "Primary analysis:\n");
-fprintf(fid, "  <CatchmentName>/standard/kept_strict.csv\n");
-fprintf(fid, "    Contains keep_exhumation grains only. This is the file\n");
-fprintf(fid, "    to use as input to TSF and Pecube workflows.\n\n");
-fprintf(fid, "Sensitivity testing (do not use for primary analysis):\n");
-fprintf(fid, "  <CatchmentName>/conservative/kept_strict.csv\n");
-fprintf(fid, "  <CatchmentName>/midpoint/kept_strict.csv\n");
-fprintf(fid, "    Same filter applied with different legacy reference ages.\n");
-fprintf(fid, "    Compare grain counts against standard/ to assess sensitivity.\n\n");
-fprintf(fid, "Cross-catchment summaries:\n");
-fprintf(fid, "  _pipeline_summary/pipeline_summary.csv\n");
-fprintf(fid, "    Pulse window and GMM parameters for each catchment.\n");
-fprintf(fid, "  _pipeline_summary/sensitivity_by_system.csv\n");
-fprintf(fid, "    keep_exhumation N under standard vs conservative vs midpoint,\n");
-fprintf(fid, "    with sensitivity flags per catchment and thermochronologic system.\n\n");
-fprintf(fid, "QA plots:\n");
-fprintf(fid, "  <CatchmentName>/ZPb_QA/\n");
+fprintf(fid, "------------------\n");
+fprintf(fid, "Each catchment has one filter_output folder with six tables:\n");
+fprintf(fid, "  filter_results_full.csv\n");
+fprintf(fid, "    All dated analyses, one date per row. Paired dates share GrainID\n");
+fprintf(fid, "    and PairID. This version includes full explanations for review.\n");
+fprintf(fid, "  filter_results_coded.csv\n");
+fprintf(fid, "    Compact publication version. ReferenceResultID and ReviewFlagID\n");
+fprintf(fid, "    map to filter_code_lookup.csv; ReviewFlagID 0 means no flag.\n");
+fprintf(fid, "  model_input_ages.csv\n");
+fprintf(fid, "    Dates eligible for downstream modeling, including review-flagged\n");
+fprintf(fid, "    dates that were not recommended for exclusion.\n");
+fprintf(fid, "  excluded_ages.csv\n");
+fprintf(fid, "    Only dates classified older_than_reference. The filename refers\n");
+fprintf(fid, "    to individual dates because paired dates can have different results.\n");
+fprintf(fid, "  review_flags.csv\n");
+fprintf(fid, "    All dates carrying a review flag. Related paired ages are repeated\n");
+fprintf(fid, "    beside them. A flag never causes exclusion, although a flagged date\n");
+fprintf(fid, "    can be excluded independently by the older-than-reference rule.\n");
+fprintf(fid, "  output_summary.csv\n");
+fprintf(fid, "    Counts by chronometer and action.\n\n");
+fprintf(fid, "Run-level tables are written once at the output root:\n");
+fprintf(fid, "  pipeline_summary.csv, output_summary.csv, filter_code_lookup.csv\n\n");
+if opts.run_sensitivity
+    fprintf(fid, "Optional reference-boundary sensitivity:\n");
+    fprintf(fid, "  <CatchmentName>/sensitivity/reference_boundary_comparison.csv\n");
+    fprintf(fid, "  reference_boundary_sensitivity_summary.csv\n");
+    fprintf(fid, "    Actual boundary ages and model-input counts for the primary older\n");
+    fprintf(fid, "    edge, midpoint, and younger edge are placed side by side;\n");
+    fprintf(fid, "    no duplicate per-mode result folders are created.\n\n");
+end
+fprintf(fid, "Target-component QA:\n");
+fprintf(fid, "  <CatchmentName>/youngest_zircon_component/\n");
 fprintf(fid, "    BIC curve and GMM fit to ZrnPb ages. Inspect to verify K\n");
-fprintf(fid, "    selection and pulse window before using results.\n\n");
+fprintf(fid, "    selection and target-component interpretation before use.\n\n");
 
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "REASON CODES  (columns: reason_code, code_ApPb)\n");
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "Each grain in all_data_classified.csv carries a reason_code\n");
-fprintf(fid, "indicating why it was assigned its class. The 'reason' column\n");
-fprintf(fid, "gives a short phrase; full probability values are in P_legacy\n");
-fprintf(fid, "and P_magmatic. The confidence threshold split is fixed at 0.90.\n\n");
-fprintf(fid, "  Code  Class              Condition\n");
-fprintf(fid, "  ----  -----------------  ----------------------------------------\n");
-fprintf(fid, "  KE    keep_exhumation    passes all filters\n");
-fprintf(fid, "  IN    indeterminate      missing or zero analytical uncertainty\n");
-fprintf(fid, "  DC    discordant         He older than U-Pb age by >2-sigma;\n");
-fprintf(fid, "                           likely analytical artifact\n");
-fprintf(fid, "  FD    flag_discordant    He nominally older than U-Pb within 2-sigma;\n");
-fprintf(fid, "                           inspect: could be noise, implantation, or reset\n");
-fprintf(fid, "  EL1   exclude_legacy     P_legacy >= 0.90  (high-confidence legacy)\n");
-fprintf(fid, "  EL2   exclude_legacy     P_thresh <= P_legacy < 0.90  (moderate)\n");
-fprintf(fid, "  FM1   flag_magmatic      P_magmatic >= 0.90  (high-confidence magmatic)\n");
-fprintf(fid, "  FM2   flag_magmatic      P_thresh <= P_magmatic < 0.90  (moderate)\n\n");
-fprintf(fid, "Apatite U-Pb codes (code_ApPb / class_ApPb) — independent of He classification:\n");
-fprintf(fid, "  code_ApPb is the short code; class_ApPb is the full class name.\n");
-fprintf(fid, "  KE  / keep_exhumation  U-Pb post-pulse; usable as mid-T constraint (~500 C)\n");
-fprintf(fid, "  EL1 / exclude_legacy   U-Pb likely pre-pulse, high confidence (P >= 0.90)\n");
-fprintf(fid, "  EL2 / exclude_legacy   U-Pb likely pre-pulse, moderate confidence\n");
-fprintf(fid, "  IN  / indeterminate    missing/zero U-Pb uncertainty\n");
-fprintf(fid, "  (blank)                non-apatite system — not applicable\n\n");
-fprintf(fid, "Interpreting He + ApPb code combinations:\n");
-fprintf(fid, "  KE + KE   both ages usable; brackets ~500 C to ~70 C cooling path\n");
-fprintf(fid, "  KE + EL   He age retained; U-Pb predates pulse, not a valid mid-T\n");
-fprintf(fid, "            constraint (do not include ApPb in thermal model)\n");
-fprintf(fid, "  EL + KE   He excluded; U-Pb post-pulse (rare — note in methods)\n\n");
+fprintf(fid, "REFERENCE AND REVIEW CODES\n");
+fprintf(fid, "--------------------------\n");
+fprintf(fid, "  RT   eligible_after_reference_screen; retain unless review flag applies\n");
+fprintf(fid, "  OR1  older_than_reference; probability >= 0.90\n");
+fprintf(fid, "  OR2  older_than_reference; decision threshold <= probability < 0.90\n");
+fprintf(fid, "       OR1 and OR2 are the only codes that recommend exclusion.\n");
+fprintf(fid, "  SC1  review: short crystallization-to-cooling interval; probability >= 0.90\n");
+fprintf(fid, "  SC2  review: short interval; moderate probability\n");
+fprintf(fid, "  AOI  review: cooling age is older than paired U-Pb\n");
+fprintf(fid, "       age beyond combined 2-sigma uncertainty\n");
+fprintf(fid, "  AOU  review: nominal age order overlaps within 2-sigma\n");
+fprintf(fid, "  II   review: required uncertainty is absent/invalid\n");
+fprintf(fid, "  NA   paired-age assessment is not applicable\n");
+fprintf(fid, "  RC   zircon U-Pb target-component reference context; not screened as a model-input age\n\n");
+fprintf(fid, "The CodeID-to-code-to-definition mapping is also written as\n");
+fprintf(fid, "filter_code_lookup.csv. Numeric IDs are nominal labels only.\n");
+fprintf(fid, "Full values are reported in P_older_than_reference, P_short_interval,\n");
+fprintf(fid, "crystallization_to_cooling_interval_Ma, and interval_1sigma_Ma.\n\n");
 
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "FILTER PARAMETERS USED IN THIS RUN\n");
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "  Delta       = %.0f Ma   (magmatic lag window)\n", opts.Delta);
-fprintf(fid, "  P_thresh    = %.2f     (exclusion/flag probability threshold)\n", opts.P_thresh);
+fprintf(fid, "SCREENING PARAMETERS USED IN THIS RUN\n");
+fprintf(fid, "-------------------------------------\n");
+fprintf(fid, "  Delta       = %.0f Ma   (short crystallization-to-cooling interval threshold)\n", opts.Delta);
+fprintf(fid, "  P_thresh    = %.2f     (screening decision probability)\n", opts.P_thresh);
 fprintf(fid, "  BoundsMethod= %s\n", opts.BoundsMethod);
-fprintf(fid, "  NSigma      = %.1f     (sigma multiplier for pulse window and model start)\n", opts.NSigma);
+fprintf(fid, "  NSigma      = %.1f     (component-sigma window multiplier)\n", opts.NSigma);
 fprintf(fid, "  Kmax        = %d        (max GMM components tested by BIC)\n", opts.Kmax);
 fprintf(fid, "  Nmc         = %d        (Monte Carlo draws per grain for ZPb GMM)\n", opts.Nmc);
+fprintf(fid, "  Component search = %.1f to %.1f Ma (allowed selected-component mean)\n", ...
+    target_age_range(1), target_age_range(2));
+fprintf(fid, "                   Ages outside this range remain in the GMM fit but\n");
+fprintf(fid, "                   their components are ineligible for target selection.\n");
 if opts.run_sensitivity
-    fprintf(fid, "  Sensitivity = true      (standard + conservative + midpoint modes run)\n\n");
+    fprintf(fid, "  Sensitivity = true      (one condensed three-boundary comparison)\n\n");
 else
-    fprintf(fid, "  Sensitivity = false     (standard mode only)\n\n");
+    fprintf(fid, "  Sensitivity = false     (primary older-bound reference only; default)\n\n");
 end
-fprintf(fid, "P_legacy_mode is always 'standard' for the standard/ folder,\n");
-fprintf(fid, "'conservative' for conservative/, and 'midpoint' for midpoint/.\n\n");
-
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "FILTER KNOBS — adjusting strictness\n");
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "  Parameter       Default   Tighter   Effect of tightening\n");
-fprintf(fid, "  P_thresh        0.65      0.50      Excludes/flags more borderline grains\n");
-fprintf(fid, "  Delta           8 Ma      12+ Ma    Flags more grains as magmatic\n");
-fprintf(fid, "  P_legacy_mode   standard  conserv.  Removes more legacy grains\n\n");
-fprintf(fid, "A warning is printed if P_thresh > 0.75 (relaxed setting).\n\n");
-
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "REFERENCE\n");
-fprintf(fid, "---------------------------------------------------------------\n");
-fprintf(fid, "Thermochronometric Scaling Function (TSF) methodology:\n");
-fprintf(fid, "  Gallagher & Parra (2020), EPSL\n");
-fprintf(fid, "This multi-chronometer extension:\n");
-fprintf(fid, "  Giblin et al. (in prep)\n");
+fprintf(fid, "The primary result uses the older edge of the target-component window.\n");
+fprintf(fid, "Boundary labels state the numerical choice and do not imply a preferred\n");
+fprintf(fid, "geological interpretation.\n\n");
 
 fclose(fid);
 fprintf("  README written to: %s\n", fullfile(outdir_root, "README.txt"));
+end
+
+function range = resolve_target_age_range(primary, legacy)
+% Prefer the neutral public name while preserving the former API.
+if all(isnan(primary))
+    range = legacy;
+elseif any(isnan(primary))
+    error("TargetComponentAgeRange must contain two numeric bounds.");
+else
+    if ~isequal(legacy, [-Inf Inf]) && ~isequal(primary, legacy)
+        error("Specify either TargetComponentAgeRange or PulseAgeRange, not conflicting values for both.");
+    end
+    range = primary;
+end
+assert(range(1) < range(2), ...
+    "TargetComponentAgeRange must be an increasing [younger older] interval.");
 end

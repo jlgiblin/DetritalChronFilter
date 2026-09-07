@@ -1,0 +1,20 @@
+# Changelog
+
+All notable changes to DetritalChronFilter are documented here.
+
+## 0.1.0-rc1 — 2026-09-06
+
+Initial release candidate for the revised public workflow.
+
+- Uses observation-based, mechanism-neutral result terminology.
+- Makes older-than-reference probability the only automatic exclusion rule.
+- Retains paired-age order and short-interval results as non-excluding review flags.
+- Accepts absolute 1σ analytical uncertainties and detects ambiguous 1σ/2σ inputs.
+- Supports automatic BIC selection and explicit per-catchment K overrides.
+- Records component search range, component window, K-selection method, and override status.
+- Writes aligned full and coded one-date-per-row result tables.
+- Separates model inputs, excluded dates, review flags, and output summaries.
+- Condenses optional reference-boundary sensitivity into comparison tables.
+- Uses `filter_output` and `youngest_zircon_component` folder names.
+- Uses `filter_results` and `output_summary` for the corresponding returned
+  MATLAB result fields as well as the written output concepts.

@@ -1,15 +1,15 @@
 function out = infer_youngest_pulse_from_ZPb(zpb_csv, outdir, opts)
 % INFER_YOUNGEST_PULSE_FROM_ZPB
-% Infers youngest magmatic pulse window from detrital zircon U-Pb ages
-% using a Gaussian Mixture Model (GMM) fit to the age distribution.
+% Selects the youngest eligible zircon U-Pb age component from a Gaussian
+% mixture model (GMM) fit to the detrital age distribution.
 %
-% The youngest GMM component (by mean) is identified as the youngest
-% magmatic pulse. Its mean (mu) and standard deviation (sigma) are used
-% to define the pulse window and a recommended model start time.
+% Its mean (mu) and component standard deviation (sigma) define a target
+% age window and a candidate model-start age. Interpreting this statistical
+% component as a magmatic pulse requires independent geological evidence.
 %
-% If ZrnPb2sigerr column exists, uses Monte Carlo jittering to propagate
-% 2-sigma analytical uncertainties into GMM fitting. Posterior assignment
-% uses original measured ages for interpretability.
+% If ZrnPb1sigerr exists, uses Monte Carlo jittering to propagate 1-sigma
+% analytical uncertainties into GMM fitting. ZrnPb2sigerr is accepted as a
+% deprecated alternative and converted internally. Never provide both.
 %
 % K selection: BIC over K = 2..Kmax by default. Use K_override to fix K
 % after inspecting QA plots.
@@ -17,15 +17,14 @@ function out = infer_youngest_pulse_from_ZPb(zpb_csv, outdir, opts)
 % -----------------------------------------------------------------------
 % BOUNDS METHODS  (BoundsMethod parameter)
 % -----------------------------------------------------------------------
-%   "gmm_ci" (default)
+%   "gmm_sigma_window" (default; "gmm_ci" retained as a legacy alias)
 %       Window = [mu - NSigma*sigma,  mu + NSigma*sigma]
 %       Uses the GMM component's own mean and std to define the window.
 %       Robust to outlier grains at the tails of the assigned population.
 %       NSigma=1.0 (default) gives ~68% of the component distribution;
 %       NSigma=2.0 gives ~95%. The upper bound (mu + NSigma*sigma) also
-%       serves as a principled model start time for QTQt/Pecube — it
-%       represents the mean crystallization age of the youngest pulse
-%       plus a tolerance for within-pluton age variability.
+%       is also reported as a candidate model-start age for QTQt/Pecube.
+%       Its suitability must be evaluated for the specific model.
 %       Minimum window floor: 2 Ma (numerical guard only; the GMM sigma
 %       already encodes real pulse width, so the floor is rarely active).
 %
@@ -38,29 +37,36 @@ function out = infer_youngest_pulse_from_ZPb(zpb_csv, outdir, opts)
 % REQUIRED / OPTIONAL COLUMNS
 % -----------------------------------------------------------------------
 %   Required : ZrnPbDate
-%   Optional : ZrnPb2sigerr  (2-sigma errors; used for MC jittering)
+%   Optional : ZrnPb1sigerr  (1-sigma errors; used for MC jittering)
+%              ZrnPb2sigerr  (deprecated 2-sigma alternative)
+%
+% TargetComponentAgeRange limits which fitted GMM component can be selected
+% as the target. The GMM is still fit to the complete age distribution, so
+% components outside the range can be represented but cannot be selected.
+% PulseAgeRange is retained as a deprecated compatibility alias.
 %
 % -----------------------------------------------------------------------
 % OUTPUT STRUCT
 % -----------------------------------------------------------------------
-%   out.Tyoung            [lo hi] Ma — pulse window passed to filter
+%   out.Tyoung            [lo hi] Ma — target window passed to screening
 %   out.mu_young          GMM component mean (Ma)
 %   out.sigma_young       GMM component std (Ma)
 %   out.weight_young      GMM component mixture weight
-%   out.model_start_Ma      mu + NSigma*sigma — recommended QTQt/Pecube
-%                           start time
-%   out.model_start_err_Ma  sigma_young — use as +/- for QTQt bounding box;
-%                           represents real within-pluton age spread, not
-%                           just uncertainty on mu
+%   out.model_start_Ma      legacy field name for candidate model-start age
+%   out.model_start_err_Ma  legacy field name for component sigma; this is
+%                           dispersion, not uncertainty on model_start_Ma
 %   out.NSigma_used       NSigma value used to compute model_start_Ma
-%   out.bounds_method     BoundsMethod used ("gmm_ci" or "quantile")
+%   out.bounds_method     BoundsMethod used
 %   out.K_used            K used for final GMM
-%   out.K_bic             K selected by BIC (= K_used unless overridden)
+%   out.K_bic             K selected by BIC; NaN when K is overridden
+%   out.K_selection_method  "bic" or "manual_override"
+%   out.K_override_applied  whether K_override controlled the final fit
 %   out.Nages             number of valid input ages
 %   out.Nselected         grains assigned to youngest component
 %   out.QAplot            path to saved QA figure
-%   out.used_errors       logical — were 2-sigma errors incorporated?
+%   out.used_errors       logical — were analytical uncertainties incorporated?
 %   out.Nmc_used          Monte Carlo draws used (0 if no errors)
+%   out.target_component_age_range  eligible component-mean range [lo hi] Ma
 %
 % -----------------------------------------------------------------------
 % USAGE
@@ -69,6 +75,8 @@ function out = infer_youngest_pulse_from_ZPb(zpb_csv, outdir, opts)
 %   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA", NSigma=1.5)
 %   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA", K_override=3)
 %   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA", BoundsMethod="quantile")
+%   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA", ...
+%       TargetComponentAgeRange=[70 300])
 
 arguments
     zpb_csv  (1,1) string
@@ -77,23 +85,28 @@ arguments
     opts.K_override       (1,1) double = 0
     opts.MinWeight        (1,1) double = 0.05
     opts.MemberProbThresh (1,1) double = 0.7
+    opts.TargetComponentAgeRange (1,2) double = [NaN NaN]
+    opts.PulseAgeRange    (1,2) double = [-Inf Inf] % deprecated alias
     opts.BoundsMethod     (1,1) string ...
                           {mustBeMember(opts.BoundsMethod, ...
-                          ["gmm_ci","quantile"])} = "gmm_ci"
-    opts.NSigma           (1,1) double = 1.0   % used by gmm_ci and for model_start_Ma
+                          ["gmm_sigma_window","gmm_ci","quantile"])} = "gmm_sigma_window"
+    opts.NSigma           (1,1) double = 1.0
     opts.BoundsQuantiles  (1,2) double = [0.02 0.98]  % used by quantile method only
-    opts.MinPulseWidth    (1,1) double = NaN   % Ma; NaN = auto (2 Ma for gmm_ci, 10 Ma for quantile)
+    opts.MinPulseWidth    (1,1) double = NaN   % legacy option name
     opts.Buffer           (1,1) double = 2     % Ma; added to each bound (quantile only)
     opts.Bandwidth        (1,1) double = NaN   % KDE bandwidth; NaN = auto
     opts.Nmc              (1,1) double = 50
     opts.MaxTotalSamples  (1,1) double = 200000
 end
 
-% Resolve MinPulseWidth: gmm_ci uses 2 Ma (just a numerical floor — the
+target_age_range = resolve_target_age_range( ...
+    opts.TargetComponentAgeRange, opts.PulseAgeRange);
+
+% Resolve minimum window width: sigma window uses 2 Ma (numerical floor; the
 % sigma already encodes pulse width). quantile uses 10 Ma (guards against
 % absurdly narrow empirical windows when few grains are assigned).
 if isnan(opts.MinPulseWidth)
-    if opts.BoundsMethod == "gmm_ci"
+    if any(opts.BoundsMethod == ["gmm_sigma_window","gmm_ci"])
         minWidth = 2;
     else
         minWidth = 10;
@@ -105,7 +118,7 @@ end
 if ~isfolder(outdir), mkdir(outdir); end
 
 % ---- Load and validate ----
-T = readtable(zpb_csv, "VariableNamingRule","preserve");
+T = readtable(zpb_csv, "Delimiter",",", "VariableNamingRule","preserve");
 vnames = string(T.Properties.VariableNames);
 
 assert(any(vnames == "ZrnPbDate"), ...
@@ -113,24 +126,31 @@ assert(any(vnames == "ZrnPbDate"), ...
     zpb_csv, strjoin(vnames, ", "));
 
 ages = T.("ZrnPbDate")(:);
-hasErr = any(vnames == "ZrnPb2sigerr");
-e2 = hasErr * ones(size(ages));   % placeholder
-if hasErr, e2 = T.("ZrnPb2sigerr")(:); end
+hasErr1 = any(vnames == "ZrnPb1sigerr");
+hasErr2 = any(vnames == "ZrnPb2sigerr");
+if hasErr1 && hasErr2
+    error("File '%s' contains both ZrnPb1sigerr and ZrnPb2sigerr. Keep only one uncertainty convention.", zpb_csv);
+elseif hasErr1
+    sig_input = T.("ZrnPb1sigerr")(:);
+elseif hasErr2
+    sig_input = T.("ZrnPb2sigerr")(:) ./ 2;
+    warning("Deprecated input ZrnPb2sigerr in %s was converted to 1-sigma. Prefer ZrnPb1sigerr.", zpb_csv);
+else
+    sig_input = nan(size(ages));
+end
+hasErr = hasErr1 || hasErr2;
 
 % Basic cleaning
 valid = isfinite(ages) & ages > 0;
 ages  = ages(valid);
-e2    = e2(valid);
+sig_input = sig_input(valid);
 
 assert(~isempty(ages), "No valid ZrnPbDate ages found in %s", zpb_csv);
 N = numel(ages);
 
-% ---- Convert 2σ → 1σ; handle missing/zero errors ----
-sig1 = nan(N, 1);
-if hasErr
-    sig1 = e2 ./ 2;
-    sig1(~isfinite(sig1) | sig1 <= 0) = NaN;
-end
+% ---- Validate 1σ uncertainties ----
+sig1 = sig_input;
+sig1(~isfinite(sig1) | sig1 <= 0) = NaN;
 
 useErrors = hasErr && any(isfinite(sig1));
 
@@ -171,8 +191,10 @@ Kmax = max(Kmin, opts.Kmax);
 
 if opts.K_override > 0
     % Manual override: fit only the requested K
-    K_bic  = opts.K_override;   % record that BIC wasn't used
+    K_bic  = NaN;
     K_use  = opts.K_override;
+    K_selection_method = "manual_override";
+    K_override_applied = true;
     gm     = fit_gmm(z, K_use);
     bic_vals = NaN(Kmax - Kmin + 1, 1);  % empty for QA plot
     K_range  = (Kmin:Kmax)';
@@ -194,23 +216,39 @@ else
     [~, best_ki] = min(bic_vals);
     K_bic = K_range(best_ki);
     K_use = K_bic;
+    K_selection_method = "bic";
+    K_override_applied = false;
     gm    = gm_store{best_ki};
 end
 
-% ---- Extract youngest valid component ----
+% ---- Extract youngest valid component within the requested age range ----
 mu  = gm.mu(:);
 sig = sqrt(squeeze(gm.Sigma));
 w   = gm.ComponentProportion(:);
 
-validComp   = w >= opts.MinWeight;
+inAgeRange = mu >= target_age_range(1) & mu <= target_age_range(2);
+assert(any(inAgeRange), ...
+    "No fitted GMM component mean falls within TargetComponentAgeRange [%.1f, %.1f] Ma.", ...
+    target_age_range(1), target_age_range(2));
+
+validComp   = w >= opts.MinWeight & inAgeRange;
 mu_masked   = mu;
 mu_masked(~validComp) = Inf;
 [mu_y, idx_y] = min(mu_masked);
 if isinf(mu_y)
-    [mu_y, idx_y] = min(mu);   % fallback: all components below MinWeight
+    mu_masked = mu;
+    mu_masked(~inAgeRange) = Inf;
+    [mu_y, idx_y] = min(mu_masked);  % fallback: in-range component below MinWeight
+    warning("All GMM components within TargetComponentAgeRange are below MinWeight; " + ...
+        "using the youngest in-range component.");
 end
 sig_y = sig(idx_y);
 w_y   = w(idx_y);
+
+if all(isfinite(target_age_range))
+    fprintf("  Target-component eligibility range: %.1f - %.1f Ma\n", ...
+        target_age_range(1), target_age_range(2));
+end
 
 % Posterior membership on original ages — used for Nselected reporting
 % regardless of BoundsMethod, and for the quantile method's grain selection.
@@ -219,21 +257,19 @@ p_y  = post(:, idx_y);
 
 % ---- Define pulse window ----
 % model_start_Ma is always mu + NSigma*sigma regardless of BoundsMethod.
-% This is the recommended start time for QTQt/Pecube: it represents the
-% GMM-estimated mean crystallization age of the youngest pulse, plus a
-% tolerance for within-pluton age variability. NSigma=1 means ~1 standard
-% deviation above the mean — i.e. the upper edge of the core of the pulse
-% distribution, not the far tail.
+% This candidate age is the selected-component mean plus NSigma times the
+% component standard deviation. The component sigma is dispersion, not an
+% uncertainty on the candidate age.
 model_start_Ma = mu_y + opts.NSigma * sig_y;
 
 switch opts.BoundsMethod
 
-    case "gmm_ci"
+    case {"gmm_sigma_window","gmm_ci"}
         % Window defined symmetrically from GMM component parameters.
         % Not sensitive to outlier grains at the tails.
         lo = mu_y - opts.NSigma * sig_y;
         hi = mu_y + opts.NSigma * sig_y;
-        fprintf("  BoundsMethod = gmm_ci | mu=%.1f, sigma=%.1f, NSigma=%.1f\n", ...
+        fprintf("  BoundsMethod = gmm_sigma_window | mu=%.1f, sigma=%.1f, NSigma=%.1f\n", ...
             mu_y, sig_y, opts.NSigma);
 
     case "quantile"
@@ -248,8 +284,8 @@ switch opts.BoundsMethod
             if numel(ages_y) < 10
                 ages_y = ages;
                 warning("infer_youngest_pulse: few grains assigned to youngest " + ...
-                    "component — pulse bounds may be poorly constrained. " + ...
-                    "Consider BoundsMethod=gmm_ci or K_override.", zpb_csv);
+                    "component — target bounds may be poorly constrained. " + ...
+                    "Consider BoundsMethod=gmm_sigma_window or K_override.", zpb_csv);
             end
         end
 
@@ -261,7 +297,7 @@ switch opts.BoundsMethod
 end
 
 % Enforce minimum window width
-% gmm_ci: floor is 2 Ma (numerical guard only; sigma encodes real pulse width)
+% GMM sigma window: floor is 2 Ma (numerical guard only)
 % quantile: floor is 10 Ma (guards against sparse-assignment edge cases)
 if (hi - lo) < minWidth
     mid = (hi + lo) / 2;
@@ -272,8 +308,8 @@ end
 
 Ty = [lo, hi];
 
-fprintf("  Pulse window: %.1f - %.1f Ma | model_start = %.1f +/- %.1f Ma (mu+%.0fsig, err=sigma)\n", ...
-    Ty(1), Ty(2), model_start_Ma, sig_y, opts.NSigma);
+fprintf("  Target-component window: %.1f - %.1f Ma | candidate model-start age = %.1f Ma (mu+%.0fsigma; component sigma=%.1f Ma)\n", ...
+    Ty(1), Ty(2), model_start_Ma, opts.NSigma, sig_y);
 
 % ---- KDE for QA (original ages only, not jittered) ----
 age_min = max(0, prctile(ages, 0.5) - 50);
@@ -327,18 +363,18 @@ override_note = "";
 if opts.K_override > 0
     override_note = " [K fixed]";
 end
-title(ax2, sprintf("Window: %.1f-%.1f Ma | mu=%.1f, sig=%.1f, N-sigma=%.1f | model start=%.1f Ma | K=%d%s", ...
+title(ax2, sprintf("Target window: %.1f-%.1f Ma | mu=%.1f, sig=%.1f, N-sigma=%.1f | candidate start=%.1f Ma | K=%d%s", ...
     Ty(1), Ty(2), mu_y, sig_y, opts.NSigma, model_start_Ma, K_use, override_note));
 legend(ax2, "KDE (raw ages)", ...
     sprintf("GMM (K=%d%s)", K_use, override_note), ...
-    sprintf("Pulse window [%s]", opts.BoundsMethod), ...
+    sprintf("Target-component window [%s]", normalize_bounds_name(opts.BoundsMethod)), ...
     "Component mean (mu)", ...
-    sprintf("Model start (mu+%.0fsig = %.1f Ma)", opts.NSigma, model_start_Ma), ...
+    sprintf("Candidate model-start age (mu+%.0fsig = %.1f Ma)", opts.NSigma, model_start_Ma), ...
     "Location","best");
 grid(ax2, "on");
 
 [~, base] = fileparts(zpb_csv);
-pngpath = fullfile(outdir, base + "_youngest_pulse_QA.png");
+pngpath = fullfile(outdir, "youngest_zircon_component_plot.png");
 saveas(fig, pngpath);
 close(fig);
 
@@ -348,34 +384,76 @@ out.Tyoung          = Ty;
 out.mu_young        = mu_y;
 out.sigma_young     = sig_y;
 out.weight_young    = w_y;
-out.model_start_Ma      = model_start_Ma;   % mu + NSigma*sigma — use as QTQt/Pecube start
-out.model_start_err_Ma  = sig_y;            % sigma_young — use as +/- for QTQt bounding box
+out.model_start_Ma      = model_start_Ma;   % legacy field name
+out.model_start_err_Ma  = sig_y;            % legacy field name; component dispersion
 out.NSigma_used         = opts.NSigma;
-out.bounds_method       = opts.BoundsMethod;
+out.bounds_method       = normalize_bounds_name(opts.BoundsMethod);
 out.K_used          = K_use;
 out.K_bic           = K_bic;
+out.K_selection_method = K_selection_method;
+out.K_override_applied = K_override_applied;
 out.Nages           = N;
 out.Nselected       = nnz(p_y >= opts.MemberProbThresh);
 out.QAplot          = pngpath;
 out.used_errors     = useErrors;
 out.Nmc_used        = Nmc;
+out.target_component_age_range = target_age_range;
+out.pulse_age_range = target_age_range; % deprecated field alias
+out.target_window_Ma = Ty;
+out.target_component_mean_Ma = mu_y;
+out.target_component_sigma_Ma = sig_y;
+out.target_component_weight = w_y;
+out.candidate_model_start_Ma = model_start_Ma;
 
-% Summary CSV — includes model_start_Ma so every catchment run produces
-% a ready-to-use recommended start time alongside the pulse window.
+% Neutral public summary. The candidate start age is reported without
+% treating the component sigma as its uncertainty.
 out_tbl = table(string(base), Ty(1), Ty(2), mu_y, sig_y, w_y, ...
-    model_start_Ma, sig_y, opts.NSigma, string(opts.BoundsMethod), ...
-    K_use, K_bic, N, out.Nselected, useErrors, Nmc, ...
-    'VariableNames', {'Dataset','Tyoung_lo','Tyoung_hi', ...
-    'mu_young','sigma_young','weight_young', ...
-    'model_start_Ma','model_start_err_Ma','NSigma','BoundsMethod', ...
-    'K_used','K_bic','Nages','Nselected','used_errors','Nmc_per_grain'});
-writetable(out_tbl, fullfile(outdir, base + "_youngest_pulse_summary.csv"));
+    model_start_Ma, opts.NSigma, string(normalize_bounds_name(opts.BoundsMethod)), ...
+    target_age_range(1), target_age_range(2), ...
+    K_use, K_bic, K_selection_method, K_override_applied, ...
+    N, out.Nselected, useErrors, Nmc, ...
+    'VariableNames', {'Dataset','target_window_lo_Ma','target_window_hi_Ma', ...
+    'target_component_mean_Ma','target_component_sigma_Ma','target_component_weight', ...
+    'candidate_model_start_Ma','NSigma','BoundsMethod', ...
+    'target_component_search_lo_Ma','target_component_search_hi_Ma', ...
+    'K_used','K_bic','K_selection_method','K_override_applied', ...
+    'Nages','Nselected','used_errors','Nmc_per_grain'});
+writetable(out_tbl, fullfile(outdir, "youngest_zircon_component_summary.csv"));
 
+end
+
+% -----------------------------------------------------------------------
+function name = normalize_bounds_name(name)
+if string(name) == "gmm_ci"
+    name = "gmm_sigma_window";
+else
+    name = string(name);
+end
+end
+
+% -----------------------------------------------------------------------
+function range = resolve_target_age_range(primary, legacy)
+% Prefer the neutral public name while preserving the former API.
+if all(isnan(primary))
+    range = legacy;
+elseif any(isnan(primary))
+    error("TargetComponentAgeRange must contain two numeric bounds.");
+else
+    if ~isequal(legacy, [-Inf Inf]) && ~isequal(primary, legacy)
+        error("Specify either TargetComponentAgeRange or PulseAgeRange, not conflicting values for both.");
+    end
+    range = primary;
+end
+assert(range(1) < range(2), ...
+    "TargetComponentAgeRange must be an increasing [younger older] interval.");
 end
 
 % -----------------------------------------------------------------------
 function gm = fit_gmm(z, K)
 % Fit a K-component GMM with regularization and multiple random starts.
+% Use a K-specific seed so the same K gives the same fit whether it is
+% reached through the BIC sweep or requested as a manual override.
+rng(1000 + round(K), "twister");
 gm = fitgmdist(z, K, ...
     "RegularizationValue", 1e-3, ...
     "Replicates",          15, ...
