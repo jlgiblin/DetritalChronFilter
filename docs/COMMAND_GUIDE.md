@@ -2,6 +2,9 @@
 
 All age-uncertainty inputs use absolute 1σ values in Ma. Use input headings ending in `1sigerr`.
 
+See [`USER_MANUAL.md`](USER_MANUAL.md) for complete input, QA, troubleshooting,
+output, and reproducibility guidance.
+
 ## Default streamlined run
 
 ```matlab

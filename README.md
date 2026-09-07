@@ -4,6 +4,15 @@ A MATLAB workflow for purpose-specific, probabilistic screening of detrital ther
 
 Current release candidate: **v0.1.0-rc1**. This version intentionally supports the documented four-file input layout. Generic chronometer imports and additional component-selection methods are planned, but are not part of v0.1.0.
 
+## Documentation
+
+- [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) provides the complete setup,
+  operation, output, quality-control, troubleshooting, and reporting guidance.
+- [`docs/COMMAND_GUIDE.md`](docs/COMMAND_GUIDE.md) is a short command reference.
+- [`input_templates/INPUT_DATA_CHECKLIST.md`](input_templates/INPUT_DATA_CHECKLIST.md)
+  summarizes input preparation.
+- [`CHANGELOG.md`](CHANGELOG.md) records release changes.
+
 ## Terminology and decision policy
 
 The public results describe calculated age relationships rather than assigning a geological cause to an individual analysis.
@@ -247,7 +256,7 @@ Run the release test from the repository root:
 run_release_tests
 ```
 
-The test generates temporary synthetic data, runs automatic and overridden component selection, verifies the output layout, checks the coded/full table mapping, and confirms that review flags do not cause exclusion.
+The tests generate temporary synthetic data, run automatic and overridden component selection, verify the output layout and public result-field names, check the coded/full table mapping, and confirm that review flags do not cause exclusion.
 
 ## Scope and roadmap
 

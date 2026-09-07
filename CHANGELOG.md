@@ -18,3 +18,5 @@ Initial release candidate for the revised public workflow.
 - Uses `filter_output` and `youngest_zircon_component` folder names.
 - Uses `filter_results` and `output_summary` for the corresponding returned
   MATLAB result fields as well as the written output concepts.
+- Adds a complete user manual with input preparation, component-selection,
+  filtering, QA, troubleshooting, output, and reproducibility guidance.
