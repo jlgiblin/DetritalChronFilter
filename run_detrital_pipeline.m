@@ -53,7 +53,7 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 %   P_thresh        screening decision probability (default 0.65)
 %   Nmc             Monte Carlo draws per grain for ZPb GMM (default 50)
 %   TargetComponentAgeRange  allowed range for the selected GMM component
-%                   mean (default [-Inf Inf]; e.g. [70 300] Ma). The GMM
+%                   mean (default [-Inf Inf]; e.g. [50 200] Ma). The GMM
 %                   still fits the full distribution. PulseAgeRange is a
 %                   deprecated compatibility alias.
 %   run_sensitivity false (default): writes the primary older-bound result.

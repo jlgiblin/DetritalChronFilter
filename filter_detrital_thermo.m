@@ -169,7 +169,7 @@ T_arar_std = table();
 T_arar_std.Grain      = string(T_arar.HblGrain);
 T_arar_std.System     = repmat("Hb_ArAr", height(T_arar), 1);
 T_arar_std.t_th_Ma    = T_arar.HblArDate;
-T_arar_std.sig_th_Ma  = read_1sigma(T_arar, "HblAr1sigerr", "HblAr2sigerr", file_arar);
+T_arar_std.sig_th_Ma  = read_1sigma(T_arar, "HblAr1sigerr", file_arar);
 T_arar_std.t_c_Ma     = nan(height(T_arar), 1);
 T_arar_std.sig_c_Ma   = nan(height(T_arar), 1);
 T_arar_std.is_apatite = false(height(T_arar), 1);
@@ -179,9 +179,9 @@ T_ap_std = table();
 T_ap_std.Grain      = string(T_ap.ApGrain);
 T_ap_std.System     = repmat("Ap_He+Ap_UPb", height(T_ap), 1);
 T_ap_std.t_th_Ma    = T_ap.ApHeDate;
-T_ap_std.sig_th_Ma  = read_1sigma(T_ap, "ApHe1sigerr", "ApHe2sigerr", file_ap);
+T_ap_std.sig_th_Ma  = read_1sigma(T_ap, "ApHe1sigerr", file_ap);
 T_ap_std.t_c_Ma     = T_ap.ApPbDate;
-T_ap_std.sig_c_Ma   = read_1sigma(T_ap, "ApPb1sigerr", "ApPb2sigerr", file_ap);
+T_ap_std.sig_c_Ma   = read_1sigma(T_ap, "ApPb1sigerr", file_ap);
 T_ap_std.is_apatite = true(height(T_ap), 1);
 
 % 3) Zircon double-dated — canonical public inputs are 1σ
@@ -189,9 +189,9 @@ T_zrn_std = table();
 T_zrn_std.Grain      = string(T_zrn.ZrnGrain);
 T_zrn_std.System     = repmat("Zrn_He+Zrn_UPb", height(T_zrn), 1);
 T_zrn_std.t_th_Ma    = T_zrn.ZrnHeDate;
-T_zrn_std.sig_th_Ma  = read_1sigma(T_zrn, "ZrnHe1sigerr", "ZrnHe2sigerr", file_zrn);
+T_zrn_std.sig_th_Ma  = read_1sigma(T_zrn, "ZrnHe1sigerr", file_zrn);
 T_zrn_std.t_c_Ma     = T_zrn.ZrnPbDate;
-T_zrn_std.sig_c_Ma   = read_1sigma(T_zrn, "ZrnPb1sigerr", "ZrnPb2sigerr", file_zrn);
+T_zrn_std.sig_c_Ma   = read_1sigma(T_zrn, "ZrnPb1sigerr", file_zrn);
 T_zrn_std.is_apatite = false(height(T_zrn), 1);
 
 T = [T_arar_std; T_ap_std; T_zrn_std];
@@ -465,6 +465,9 @@ function T = load_and_check(filepath, required_cols)
 assert(isfile(filepath), "File not found: %s", filepath);
 T = readtable(filepath, "Delimiter",",", "VariableNamingRule","preserve");
 vnames = string(T.Properties.VariableNames);
+if any(endsWith(vnames, "2sigerr", "IgnoreCase", true))
+    error("File '%s' contains a 2-sigma uncertainty column. Convert all uncertainties to 1-sigma and use columns ending in '1sigerr'.", filepath);
+end
 missing = required_cols(~ismember(required_cols, vnames));
 if ~isempty(missing)
     error("In file '%s', missing required column(s): %s\nFound columns: %s", ...
@@ -472,25 +475,15 @@ if ~isempty(missing)
 end
 end
 
-function sigma1 = read_1sigma(T, canonical_name, legacy_2sigma_name, filepath)
-% Read a 1σ uncertainty. Exactly one supported column must be present.
+function sigma1 = read_1sigma(T, canonical_name, filepath)
+% Read a required 1σ uncertainty column.
 vnames = string(T.Properties.VariableNames);
 has_1sigma = any(vnames == canonical_name);
-has_2sigma = any(vnames == legacy_2sigma_name);
-
-if has_1sigma && has_2sigma
-    error("File '%s' contains both %s and %s. Keep only one uncertainty convention.", ...
-        filepath, canonical_name, legacy_2sigma_name);
-elseif has_1sigma
+if has_1sigma
     sigma1 = T.(canonical_name);
-elseif has_2sigma
-    sigma1 = T.(legacy_2sigma_name) ./ 2;
-    warning("Deprecated 2-sigma input '%s' in %s was converted to 1-sigma. Prefer '%s'.", ...
-        legacy_2sigma_name, filepath, canonical_name);
 else
-    error("File '%s' must contain the 1-sigma uncertainty column '%s'. " + ...
-        "The deprecated 2-sigma alternative '%s' is also accepted.", ...
-        filepath, canonical_name, legacy_2sigma_name);
+    error("File '%s' must contain the 1-sigma uncertainty column '%s'.", ...
+        filepath, canonical_name);
 end
 end
 

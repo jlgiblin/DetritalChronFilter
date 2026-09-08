@@ -7,9 +7,8 @@ function out = infer_youngest_pulse_from_ZPb(zpb_csv, outdir, opts)
 % age window and a candidate model-start age. Interpreting this statistical
 % component as a magmatic pulse requires independent geological evidence.
 %
-% If ZrnPb1sigerr exists, uses Monte Carlo jittering to propagate 1-sigma
-% analytical uncertainties into GMM fitting. ZrnPb2sigerr is accepted as a
-% deprecated alternative and converted internally. Never provide both.
+% Uses Monte Carlo jittering to propagate the required 1-sigma analytical
+% uncertainties in ZrnPb1sigerr into GMM fitting.
 %
 % K selection: BIC over K = 2..Kmax by default. Use K_override to fix K
 % after inspecting QA plots.
@@ -34,11 +33,9 @@ function out = infer_youngest_pulse_from_ZPb(zpb_csv, outdir, opts)
 %       Use if the GMM sigma is poorly constrained (small N in component).
 %
 % -----------------------------------------------------------------------
-% REQUIRED / OPTIONAL COLUMNS
+% REQUIRED COLUMNS
 % -----------------------------------------------------------------------
-%   Required : ZrnPbDate
-%   Optional : ZrnPb1sigerr  (1-sigma errors; used for MC jittering)
-%              ZrnPb2sigerr  (deprecated 2-sigma alternative)
+%   ZrnPbDate, ZrnPb1sigerr
 %
 % TargetComponentAgeRange limits which fitted GMM component can be selected
 % as the target. The GMM is still fit to the complete age distribution, so
@@ -71,12 +68,12 @@ function out = infer_youngest_pulse_from_ZPb(zpb_csv, outdir, opts)
 % -----------------------------------------------------------------------
 % USAGE
 % -----------------------------------------------------------------------
-%   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA")
-%   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA", NSigma=1.5)
-%   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA", K_override=3)
-%   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA", BoundsMethod="quantile")
-%   out = infer_youngest_pulse_from_ZPb("TC/ZrnPb.csv", "TC/QA", ...
-%       TargetComponentAgeRange=[70 300])
+%   out = infer_youngest_pulse_from_ZPb("CatchmentA/ZrnPb.csv", "CatchmentA/QA")
+%   out = infer_youngest_pulse_from_ZPb("CatchmentA/ZrnPb.csv", "CatchmentA/QA", NSigma=1.5)
+%   out = infer_youngest_pulse_from_ZPb("CatchmentA/ZrnPb.csv", "CatchmentA/QA", K_override=3)
+%   out = infer_youngest_pulse_from_ZPb("CatchmentA/ZrnPb.csv", "CatchmentA/QA", BoundsMethod="quantile")
+%   out = infer_youngest_pulse_from_ZPb("CatchmentA/ZrnPb.csv", "CatchmentA/QA", ...
+%       TargetComponentAgeRange=[50 200])
 
 arguments
     zpb_csv  (1,1) string
@@ -124,21 +121,15 @@ vnames = string(T.Properties.VariableNames);
 assert(any(vnames == "ZrnPbDate"), ...
     "Column 'ZrnPbDate' not found in %s.\nFound: %s", ...
     zpb_csv, strjoin(vnames, ", "));
+assert(any(vnames == "ZrnPb1sigerr"), ...
+    "Required 1-sigma column 'ZrnPb1sigerr' not found in %s.\nFound: %s", ...
+    zpb_csv, strjoin(vnames, ", "));
+if any(endsWith(vnames, "2sigerr", "IgnoreCase", true))
+    error("File '%s' contains a 2-sigma uncertainty column. Convert all uncertainties to 1-sigma and use columns ending in '1sigerr'.", zpb_csv);
+end
 
 ages = T.("ZrnPbDate")(:);
-hasErr1 = any(vnames == "ZrnPb1sigerr");
-hasErr2 = any(vnames == "ZrnPb2sigerr");
-if hasErr1 && hasErr2
-    error("File '%s' contains both ZrnPb1sigerr and ZrnPb2sigerr. Keep only one uncertainty convention.", zpb_csv);
-elseif hasErr1
-    sig_input = T.("ZrnPb1sigerr")(:);
-elseif hasErr2
-    sig_input = T.("ZrnPb2sigerr")(:) ./ 2;
-    warning("Deprecated input ZrnPb2sigerr in %s was converted to 1-sigma. Prefer ZrnPb1sigerr.", zpb_csv);
-else
-    sig_input = nan(size(ages));
-end
-hasErr = hasErr1 || hasErr2;
+sig_input = T.("ZrnPb1sigerr")(:);
 
 % Basic cleaning
 valid = isfinite(ages) & ages > 0;
@@ -152,7 +143,7 @@ N = numel(ages);
 sig1 = sig_input;
 sig1(~isfinite(sig1) | sig1 <= 0) = NaN;
 
-useErrors = hasErr && any(isfinite(sig1));
+useErrors = any(isfinite(sig1));
 
 % Fallback sigma: trimmed mean of valid sigmas (more robust than median
 % when a few grains have anomalously large reported uncertainties)

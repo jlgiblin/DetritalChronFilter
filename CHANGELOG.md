@@ -9,7 +9,7 @@ Initial release candidate for the revised public workflow.
 - Uses observation-based, mechanism-neutral result terminology.
 - Makes older-than-reference probability the only automatic exclusion rule.
 - Retains paired-age order and short-interval results as non-excluding review flags.
-- Accepts absolute 1σ analytical uncertainties and detects ambiguous 1σ/2σ inputs.
+- Requires absolute 1σ analytical uncertainties for every input dataset.
 - Supports automatic BIC selection and explicit per-catchment K overrides.
 - Records component search range, component window, K-selection method, and override status.
 - Writes aligned full and coded one-date-per-row result tables.

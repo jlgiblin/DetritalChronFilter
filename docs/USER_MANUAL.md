@@ -14,7 +14,7 @@ implemented in this release.
 
 - MATLAB R2021a or later
 - Statistics and Machine Learning Toolbox
-- Input ages and absolute 1 sigma analytical uncertainties reported in Ma
+- Input ages and required absolute 1 sigma analytical uncertainties reported in Ma
 
 The automated release tests were run with MATLAB R2025b.
 
@@ -27,7 +27,6 @@ The automated release tests were run with MATLAB R2025b.
 | `filter_detrital_thermo.m` | Applies the reference screen and paired-age review calculations |
 | `input_templates/` | Header-only CSV templates and an input checklist |
 | `examples/synthetic/` | Complete synthetic example with three catchments |
-| `examples/dissertation_chapter1/` | Settings used for the Chapter 1 analysis, without dissertation data |
 | `docs/COMMAND_GUIDE.md` | Short command reference |
 | `run_release_tests.m` | Automated test entry point |
 
@@ -73,10 +72,9 @@ memory. The following rules prevent the most common input problems:
 - Investigate zero, negative, missing, or nonnumeric ages and uncertainties before
   running the program.
 
-Older `2sigerr` columns remain accepted so earlier analyses can be reproduced.
-The code converts those values to 1 sigma and prints a warning. Do not provide
-both 1 sigma and 2 sigma columns for the same age; the program will stop rather
-than guess which convention is correct.
+Only columns ending in `1sigerr` are accepted. Convert uncertainties to 1 sigma
+before preparing the input files; the program does not convert other uncertainty
+conventions automatically.
 
 The fixed four-file layout does not require every He analysis to have a paired
 U-Pb date. An unpaired analysis can be included by leaving its paired U-Pb age and
@@ -108,7 +106,7 @@ component means are eligible for selection:
 
 ```matlab
 run_detrital_pipeline("Catchments", "Output", ...
-    TargetComponentAgeRange=[70 300])
+    TargetComponentAgeRange=[50 200])
 ```
 
 This range does not remove ages from the zircon U-Pb distribution. The mixture
@@ -397,19 +395,6 @@ For each reported run, retain or report:
 
 The output `README.txt` records the principal settings used in each run. Keep it
 with the result tables rather than relying on folder names or memory.
-
-## Dissertation Chapter 1 settings
-
-The included Chapter 1 configuration applies automatic BIC selection to OP and TC
-and a reviewed `K=3` override to WP. It also limits eligible target-component
-means to 70-300 Ma and enables reference-boundary sensitivity:
-
-```matlab
-addpath("examples/dissertation_chapter1")
-run_chapter1_configuration("Ch1_Input", "Ch1_Output")
-```
-
-The repository contains only the settings. Dissertation data are not distributed.
 
 ## Testing
 

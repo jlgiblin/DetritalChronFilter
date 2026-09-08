@@ -16,8 +16,8 @@ This writes one `filter_output` folder per catchment. Optional reference-boundar
 ## Restrict target-component selection
 
 ```matlab
-run_detrital_pipeline("Catchments", "Output_70_300Ma", ...
-    TargetComponentAgeRange=[70 300])
+run_detrital_pipeline("Catchments", "Output_50_200Ma", ...
+    TargetComponentAgeRange=[50 200])
 ```
 
 The GMM still uses the complete valid zircon U–Pb distribution. The range only controls which component means can be selected; the youngest eligible component is chosen.

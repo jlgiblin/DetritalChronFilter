@@ -64,7 +64,7 @@ Required columns are:
 | `ApHeApPb.csv` | `ApGrain`, `ApHeDate`, `ApHe1sigerr`, `ApPbDate`, `ApPb1sigerr` |
 | `ZrnHeZrnPb.csv` | `ZrnGrain`, `ZrnHeDate`, `ZrnHe1sigerr`, `ZrnPbDate`, `ZrnPb1sigerr` |
 
-All uncertainty inputs use absolute 1σ values in Ma. Deprecated `2sigerr` alternatives are converted internally for reproducibility. Supplying both uncertainty conventions for the same date produces an error.
+All datasets must include absolute 1σ uncertainties in Ma, using the required column names ending in `1sigerr`. Other uncertainty conventions are not accepted.
 
 ## Quick start
 
@@ -76,7 +76,7 @@ addpath(pwd)
 
 ```matlab
 run_detrital_pipeline("Catchments", "Output", ...
-    TargetComponentAgeRange=[70 300])
+    TargetComponentAgeRange=[50 200])
 ```
 
 The default run creates one primary result set per catchment:
@@ -132,7 +132,7 @@ The default is `run_sensitivity=false`. To compare three reference choices witho
 
 ```matlab
 run_detrital_pipeline("Catchments", "Output", ...
-    TargetComponentAgeRange=[70 300], ...
+    TargetComponentAgeRange=[50 200], ...
     run_sensitivity=true)
 ```
 
@@ -157,19 +157,6 @@ run("examples/synthetic/run_example.m")
 ```
 
 The example writes generated results to `examples/synthetic/output/`, which is ignored by Git.
-
-### Dissertation Chapter 1 configuration
-
-The dissertation analysis uses automatic BIC selection for OP and TC and a reviewed `K=3` override for WP. To preserve that decision explicitly:
-
-```matlab
-addpath("examples/dissertation_chapter1")
-run_chapter1_configuration("Ch1_Input", "Ch1_Output")
-```
-
-The pipeline summary records `K_selection_method="manual_override"` and `K_override_applied=true` for WP so the override is not mistaken for a BIC-selected result.
-
-This example contains settings only; dissertation data are not distributed with the package.
 
 ## Reference and review codes
 
@@ -219,7 +206,7 @@ run_detrital_pipeline("Catchments", "Output", ...
     Kmax=6, ...
     K_override=0, ...
     Nmc=50, ...
-    TargetComponentAgeRange=[70 300], ...
+    TargetComponentAgeRange=[50 200], ...
     run_sensitivity=false)
 ```
 

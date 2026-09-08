@@ -2,15 +2,14 @@
 /Catchments/
 /Output/
 /Output_*/
-/Ch1_Input/
-/DTF_backup/
-/ExampleOutput.xlsx
+/*_Input/
+/*_backup/
 /examples/synthetic/output/
 /examples/synthetic/inputs_generated/
-/examples/dissertation_chapter1/data/
-/examples/dissertation_chapter1/output/
+/examples/*/data/
+/examples/*/output/
 
-# Research tables and workbooks are private by default. The distributed
+# User-supplied tables and workbooks are private by default. The distributed
 # templates and synthetic inputs below are deliberate exceptions.
 *.csv
 *.xlsx
