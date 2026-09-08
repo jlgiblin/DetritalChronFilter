@@ -121,7 +121,30 @@ classdef TestRelease < matlab.unittest.TestCase
                 review_excluded = string(review.Action) == "exclude";
                 testCase.verifyTrue(all(ismember( ...
                     string(review.ReferenceCode(review_excluded)), ["OR1", "OR2"])));
-                testCase.verifyEqual(sum(summary.N), height(full));
+                testCase.verifyEqual(sum(summary.N_ReportedRows), height(full));
+                testCase.verifyEqual(height(summary), ...
+                    numel(unique(string(full.Chronometer))));
+                for summary_row = 1:height(summary)
+                    chronometer = string(summary.Chronometer(summary_row));
+                    rows = string(full.Chronometer) == chronometer;
+                    valid = rows & isfinite(full.Age_Ma) & full.Age_Ma > 0;
+                    model_rows = valid & logical(full.ModelInclude);
+                    testCase.verifyEqual(summary.N_ValidAges(summary_row), nnz(valid));
+                    testCase.verifyEqual(summary.N_ModelInput(summary_row), nnz(model_rows));
+                    testCase.verifyEqual(summary.N_Excluded(summary_row), ...
+                        nnz(rows & string(full.Action) == "exclude"));
+                    testCase.verifyEqual(summary.N_ReviewFlagged(summary_row), ...
+                        nnz(rows & logical(full.ReviewRecommended)));
+                    if any(model_rows)
+                        model_ages = full.Age_Ma(model_rows);
+                        testCase.verifyEqual(summary.ModelInputMinAge_Ma(summary_row), ...
+                            min(model_ages), AbsTol=1e-10);
+                        testCase.verifyEqual(summary.ModelInputMedianAge_Ma(summary_row), ...
+                            median(model_ages), AbsTol=1e-10);
+                        testCase.verifyEqual(summary.ModelInputMaxAge_Ma(summary_row), ...
+                            max(model_ages), AbsTol=1e-10);
+                    end
+                end
 
                 lookup_codes = string(lookup.Code);
                 reference_codes = string(full.ReferenceCode);

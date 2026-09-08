@@ -272,10 +272,17 @@ Use the tables as follows:
 | `model_input_ages.csv` | Obtain dates eligible for downstream modeling under the stated rule |
 | `excluded_ages.csv` | Review only dates assigned OR1 or OR2 |
 | `review_flags.csv` | Review all non-excluding paired-age and information flags |
-| Catchment `output_summary.csv` | Check counts by chronometer and action |
+| Catchment `output_summary.csv` | Compare observed and post-filter model-input age ranges and counts among chronometers |
 | Root `pipeline_summary.csv` | Review component parameters, K selection, search range, and candidate start ages |
-| Root `output_summary.csv` | Compare filtering counts across catchments |
+| Root `output_summary.csv` | Compare chronometer age ranges and filtering counts across catchments |
 | Root `filter_code_lookup.csv` | Translate codes and numeric identifiers |
+
+Each `output_summary.csv` row reports the complete observed minimum and maximum
+for one chronometer, plus the minimum, median, and maximum among dates retained
+for model input. It also reports excluded, review-flagged, and reference-only
+counts. These descriptive ranges make cross-chronometer patterns visible for
+manual review; they do not apply a closure-temperature ordering rule or identify
+individual dates for exclusion.
 
 The two filter-results tables contain one dated analysis per row. Paired dates
 share `GrainID` and `PairID` but occupy separate rows so each chronometer receives

@@ -107,11 +107,13 @@ The six catchment tables have distinct roles:
 | `model_input_ages.csv` | Dates eligible for downstream modeling, including non-excluded dates carrying review flags |
 | `excluded_ages.csv` | Only dates that meet the older-than-reference exclusion rule |
 | `review_flags.csv` | All dates carrying a review flag, with the related paired date repeated beside them |
-| `output_summary.csv` | Counts by chronometer and action |
+| `output_summary.csv` | One row per chronometer with observed and model-input age ranges, model-input median, and exclusion/review counts |
 
 Paired measurements occupy separate rows in both filter-results tables and share `GrainID` and `PairID`. This preserves the relationship while allowing, for example, apatite He and apatite U–Pb dates to have separate filtering decisions. The file is named `excluded_ages.csv`, rather than “excluded grains,” because two dates from one paired grain may receive different results.
 
-The root-level `pipeline_summary.csv` records target-component and model-start information for all catchments. The root-level `output_summary.csv` combines the catchment summaries, and `filter_code_lookup.csv` defines the numeric IDs once for the entire run.
+The root-level `pipeline_summary.csv` records target-component and model-start information for all catchments. The root-level `output_summary.csv` combines the chronometer summaries across catchments, and `filter_code_lookup.csv` defines the numeric IDs once for the entire run.
+
+The observed minimum and maximum include every valid reported date. The model-input minimum, median, and maximum describe only dates retained after the reference screen, including non-excluding review flags. Comparing these ranges can reveal patterns worth reviewing, but the summary does not assign closure temperatures or label a cross-chronometer ordering problem.
 
 In the full table, `ReviewCode="NF"` means that no separate review flag was assigned. The corresponding coded-table value is `ReviewFlagID=0`. All numeric IDs map directly to `filter_code_lookup.csv`; they are identifiers, not ranked scores. Unpaired rows use `PairID="not_paired"` so spreadsheet and MATLAB imports preserve the column as text.
 

@@ -18,7 +18,7 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 %   <outdir_root>/
 %     README.txt
 %     pipeline_summary.csv          — target-component window + GMM statistics
-%     output_summary.csv            — counts by catchment, chronometer, action
+%     output_summary.csv            — age ranges and counts by catchment and chronometer
 %     filter_code_lookup.csv        — code definitions written once per run
 %     <CatchmentName>/
 %       youngest_zircon_component/  — GMM plot and component summary
@@ -28,7 +28,7 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 %         model_input_ages.csv      — eligible dates for downstream models
 %         excluded_ages.csv         — only dates recommended for exclusion
 %         review_flags.csv          — dates carrying a separate review flag
-%         output_summary.csv        — catchment-level counts
+%         output_summary.csv        — chronometer age ranges and counts
 %       sensitivity/                — only when run_sensitivity=true
 %         reference_boundary_comparison.csv
 %     reference_boundary_sensitivity_summary.csv — when run_sensitivity=true
@@ -460,7 +460,10 @@ fprintf(fid, "    All dates carrying a review flag. Related paired ages are repe
 fprintf(fid, "    beside them. A flag never causes exclusion, although a flagged date\n");
 fprintf(fid, "    can be excluded independently by the older-than-reference rule.\n");
 fprintf(fid, "  output_summary.csv\n");
-fprintf(fid, "    Counts by chronometer and action.\n\n");
+fprintf(fid, "    One row per chronometer with observed age range, model-input\n");
+fprintf(fid, "    age range and median, and excluded/review/reference counts.\n");
+fprintf(fid, "    Range comparisons are descriptive and do not apply a\n");
+fprintf(fid, "    closure-temperature ordering rule.\n\n");
 fprintf(fid, "Run-level tables are written once at the output root:\n");
 fprintf(fid, "  pipeline_summary.csv, output_summary.csv, filter_code_lookup.csv\n\n");
 if opts.run_sensitivity

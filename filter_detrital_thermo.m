@@ -46,7 +46,7 @@ function result = filter_detrital_thermo(file_arar, file_ap, file_zrn, outdir, T
 %   model_input_ages.csv    — dates eligible for downstream modeling
 %   excluded_ages.csv       — only dates recommended for exclusion
 %   review_flags.csv        — all dates carrying a separate review flag
-%   output_summary.csv      — counts by chronometer and action
+%   output_summary.csv      — age ranges and counts by chronometer
 %   filter_code_lookup.csv  — ID definitions (unless WriteCodeLookup=false)
 %
 % -----------------------------------------------------------------------
@@ -211,10 +211,7 @@ T_model = T_long(T_long.ModelInclude, :);
 T_excluded = T_long(T_long.Action == "exclude", :);
 T_review = make_review_flags_table(T_long);
 
-[G_long, chrono_long, action_long] = findgroups(T_long.Chronometer, T_long.Action);
-N_long = splitapply(@numel, T_long.GrainID, G_long);
-long_summary = table(chrono_long, action_long, N_long, ...
-    'VariableNames', {'Chronometer','Action','N'});
+output_summary = make_output_summary(T_long);
 
 % Reference-screen summary counts. Review flags are intentionally separate
 % because they do not determine exclusion.
@@ -237,7 +234,7 @@ result.coded_results = T_coded;
 result.model_input_ages = T_model;
 result.excluded_ages = T_excluded;
 result.review_flags = T_review;
-result.output_summary = long_summary;
+result.output_summary = output_summary;
 result.system_screening_counts = summary_tbl;
 result.review_counts = review_summary;
 result.wide_results = T_public;
@@ -249,7 +246,7 @@ if opts.WriteOutputs
     writetable(T_model, fullfile(outdir, "model_input_ages.csv"));
     writetable(T_excluded, fullfile(outdir, "excluded_ages.csv"));
     writetable(T_review, fullfile(outdir, "review_flags.csv"));
-    writetable(long_summary, fullfile(outdir, "output_summary.csv"));
+    writetable(output_summary, fullfile(outdir, "output_summary.csv"));
     if opts.WriteCodeLookup
         writetable(screening_code_lookup(), ...
             fullfile(outdir, "filter_code_lookup.csv"));
@@ -485,6 +482,62 @@ else
     error("File '%s' must contain the 1-sigma uncertainty column '%s'.", ...
         filepath, canonical_name);
 end
+end
+
+function S = make_output_summary(L)
+% One neutral row per chronometer. Observed ranges include every valid age
+% written to the full results table; model-input ranges include only dates
+% retained by the reference screen. These fields support visual comparison
+% among systems but do not impose or evaluate closure-temperature ordering.
+chronometers = unique(string(L.Chronometer), 'stable');
+n = numel(chronometers);
+
+N_ReportedRows = zeros(n, 1);
+N_ValidAges = zeros(n, 1);
+ObservedMinAge_Ma = nan(n, 1);
+ObservedMaxAge_Ma = nan(n, 1);
+N_ModelInput = zeros(n, 1);
+ModelInputMinAge_Ma = nan(n, 1);
+ModelInputMedianAge_Ma = nan(n, 1);
+ModelInputMaxAge_Ma = nan(n, 1);
+N_Excluded = zeros(n, 1);
+N_ReviewFlagged = zeros(n, 1);
+N_ReferenceOnly = zeros(n, 1);
+
+for i = 1:n
+    rows = string(L.Chronometer) == chronometers(i);
+    valid = rows & isfinite(L.Age_Ma) & L.Age_Ma > 0;
+    model = valid & logical(L.ModelInclude);
+    observed_ages = L.Age_Ma(valid);
+    model_ages = L.Age_Ma(model);
+
+    N_ReportedRows(i) = nnz(rows);
+    N_ValidAges(i) = nnz(valid);
+    if ~isempty(observed_ages)
+        ObservedMinAge_Ma(i) = min(observed_ages);
+        ObservedMaxAge_Ma(i) = max(observed_ages);
+    end
+
+    N_ModelInput(i) = nnz(model);
+    if ~isempty(model_ages)
+        ModelInputMinAge_Ma(i) = min(model_ages);
+        ModelInputMedianAge_Ma(i) = median(model_ages);
+        ModelInputMaxAge_Ma(i) = max(model_ages);
+    end
+
+    N_Excluded(i) = nnz(rows & string(L.Action) == "exclude");
+    N_ReviewFlagged(i) = nnz(rows & logical(L.ReviewRecommended));
+    N_ReferenceOnly(i) = nnz(rows & string(L.Action) == "reference_only");
+end
+
+S = table(chronometers, N_ReportedRows, N_ValidAges, ...
+    ObservedMinAge_Ma, ObservedMaxAge_Ma, N_ModelInput, ...
+    ModelInputMinAge_Ma, ModelInputMedianAge_Ma, ModelInputMaxAge_Ma, ...
+    N_Excluded, N_ReviewFlagged, N_ReferenceOnly, ...
+    'VariableNames', {'Chronometer','N_ReportedRows','N_ValidAges', ...
+    'ObservedMinAge_Ma','ObservedMaxAge_Ma','N_ModelInput', ...
+    'ModelInputMinAge_Ma','ModelInputMedianAge_Ma','ModelInputMaxAge_Ma', ...
+    'N_Excluded','N_ReviewFlagged','N_ReferenceOnly'});
 end
 
 function L = make_long_results_table(T, params)

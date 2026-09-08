@@ -67,9 +67,9 @@ run_detrital_pipeline("Catchments", "Output", K_override_map=K_map)
 | `<Catchment>/filter_output/model_input_ages.csv` | Dates eligible for downstream modeling, including dates with non-excluding review flags |
 | `<Catchment>/filter_output/excluded_ages.csv` | Only dates meeting the older-than-reference exclusion rule |
 | `<Catchment>/filter_output/review_flags.csv` | All review flags, with related paired ages included; any exclusion is independently due to the older-than-reference rule |
-| `<Catchment>/filter_output/output_summary.csv` | Counts by chronometer and action |
+| `<Catchment>/filter_output/output_summary.csv` | One row per chronometer with observed and model-input age ranges, model-input median, and exclusion/review counts |
 | `pipeline_summary.csv` | Selected-component statistics and candidate model-start ages |
-| `output_summary.csv` | Combined filtering counts across catchments |
+| `output_summary.csv` | Combined chronometer age-range and count summaries across catchments |
 | `filter_code_lookup.csv` | Code definitions and nominal numeric IDs |
 | `<Catchment>/youngest_zircon_component/` | Mixture-model plot and selected-component summary |
 
