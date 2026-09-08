@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the software release and any associated publication."
+title: "DetritalChronFilter"
+type: software
+authors:
+  - family-names: "Giblin"
+    given-names: "Jacqueline"
+version: "0.1.0-rc2"
+date-released: 2026-09-07
+license: MIT
+repository-code: "https://github.com/jlgiblin/DetritalChronFilter"
+url: "https://github.com/jlgiblin/DetritalChronFilter"
