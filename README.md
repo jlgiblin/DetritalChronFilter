@@ -118,6 +118,19 @@ For a single sample whose two CSVs are directly inside `SampleA/`:
 run_detrital_pipeline("SampleA", "Output")
 ```
 
+### Converting inputs from the original public version
+
+The original release used four fixed CSV files per sample. Convert a copy of
+those inputs without overwriting the originals:
+
+```matlab
+convert_fixed_inputs_to_two_file("OriginalInputs", "ConvertedInputs")
+run_detrital_pipeline("ConvertedInputs", "Output")
+```
+
+The converter preserves the original model-candidate policy: apatite U–Pb is
+screened as a model candidate, while paired zircon U–Pb is retained as context.
+
 To limit which fitted component means can be selected:
 
 ```matlab

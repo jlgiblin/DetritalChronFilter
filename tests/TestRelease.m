@@ -237,6 +237,46 @@ classdef TestRelease < matlab.unittest.TestCase
             testCase.verifyEqual(nnz(result.filter_results.Action == "exclude"), 1);
         end
 
+        function fixedInputConverterPreservesCandidatePolicy(testCase)
+            source_root = fullfile(testCase.WorkDir, "fixed_inputs");
+            source_dir = fullfile(source_root, "SampleX");
+            destination_root = fullfile(testCase.WorkDir, "converted_inputs");
+            mkdir(source_dir);
+
+            writetable(table([90;150], [1;2], ...
+                'VariableNames', {'ZrnPbDate','ZrnPb1sigerr'}), ...
+                fullfile(source_dir, "ZrnPb.csv"));
+            writetable(table("H1", 70, 1, ...
+                'VariableNames', {'HblGrain','HblArDate','HblAr1sigerr'}), ...
+                fullfile(source_dir, "HblAr.csv"));
+            writetable(table("A1", 40, 1, 90, 2, ...
+                'VariableNames', {'ApGrain','ApHeDate','ApHe1sigerr', ...
+                'ApPbDate','ApPb1sigerr'}), ...
+                fullfile(source_dir, "ApHeApPb.csv"));
+            writetable(table("Z1", 50, 1, 95, 2, ...
+                'VariableNames', {'ZrnGrain','ZrnHeDate','ZrnHe1sigerr', ...
+                'ZrnPbDate','ZrnPb1sigerr'}), ...
+                fullfile(source_dir, "ZrnHeZrnPb.csv"));
+
+            manifest = convert_fixed_inputs_to_two_file( ...
+                source_root, destination_root);
+            reference = readtable(fullfile(destination_root, "SampleX", ...
+                "ReferenceDistribution.csv"), TextType="string");
+            chronometers = readtable(fullfile(destination_root, "SampleX", ...
+                "ChronometerData.csv"), TextType="string");
+
+            testCase.verifyEqual(height(manifest), 1);
+            testCase.verifyEqual(height(reference), 2);
+            testCase.verifyEqual(reference.Age_Ma, [90;150]);
+            testCase.verifyEqual(height(chronometers), 5);
+            ap_u_pb = chronometers.Chronometer == "ApUPb";
+            zrn_u_pb = chronometers.Chronometer == "ZrnUPb";
+            testCase.verifyTrue(logical(chronometers.UseForModel(ap_u_pb)));
+            testCase.verifyFalse(logical(chronometers.UseForModel(zrn_u_pb)));
+            testCase.verifyEqual(chronometers.PairRole(ap_u_pb), "expected_older");
+            testCase.verifyEqual(chronometers.PairRole(zrn_u_pb), "expected_older");
+        end
+
         function referenceSystemLabelIsGeneric(testCase)
             source = fullfile(testCase.InputDir, "SampleA", ...
                 "ReferenceDistribution.csv");

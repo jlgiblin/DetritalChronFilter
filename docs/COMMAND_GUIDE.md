@@ -18,6 +18,15 @@ run_detrital_pipeline("Samples/SampleA", "Output")
 
 For multiple samples, select their shared parent folder as in the default run.
 
+## Convert original four-file inputs
+
+```matlab
+convert_fixed_inputs_to_two_file("OriginalInputs", "ConvertedInputs")
+```
+
+The converter creates the two required CSVs in a separate destination and does
+not overwrite the original files.
+
 ## Restrict target-component selection
 
 ```matlab

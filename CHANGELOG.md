@@ -10,6 +10,8 @@ All notable changes to DetritalChronFilter are documented here.
   for grouping and display, not scientific inference.
 - Replaces catchment-specific public terminology with `Sample` and supports
   both a direct single-sample folder and multi-sample subfolders.
+- Adds a non-overwriting converter for inputs from the original four-file
+  public workflow.
 - Makes paired relationships optional through `PairID` and `PairRole`.
 - Adds `UseForModel` so paired or contextual observations can be retained
   without entering the screened model-input dataset.

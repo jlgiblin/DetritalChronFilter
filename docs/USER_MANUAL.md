@@ -21,6 +21,7 @@ The program does not convert 2σ inputs.
 | File or folder | Purpose |
 |---|---|
 | `run_detrital_pipeline.m` | Recommended entry point for one or more samples |
+| `convert_fixed_inputs_to_two_file.m` | Converts original four-file inputs without overwriting them |
 | `infer_target_component.m` | Fits reference-distribution mixture models and selects the target component |
 | `filter_detrital_thermo.m` | Applies the reference screen and optional pair diagnostics |
 | `input_templates/` | Header-only templates and preparation checklist |
@@ -151,6 +152,19 @@ run_detrital_pipeline("Samples", "Output", ...
 ```
 
 The pipeline records whether K was selected by BIC or supplied manually.
+
+### Original four-file inputs
+
+Users updating from the original public version can convert a copy of their
+inputs into the current layout:
+
+```matlab
+convert_fixed_inputs_to_two_file("OriginalInputs", "ConvertedInputs")
+```
+
+The destination must differ from the source. Existing converted CSVs are not
+overwritten. The converter retains apatite U–Pb as a model candidate and paired
+zircon U–Pb as context, matching the prior public workflow.
 
 ## 7. Target-component selection
 
