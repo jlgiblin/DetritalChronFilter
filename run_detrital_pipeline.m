@@ -1,16 +1,14 @@
 function run_detrital_pipeline(catchments_root, outdir_root, opts)
 % RUN_DETRITAL_PIPELINE
 % Discovers all catchment subfolders under catchments_root, runs
-% infer_youngest_pulse_from_ZPb then filter_detrital_thermo for each,
+% infer_target_component then filter_detrital_thermo for each,
 % and writes cross-catchment summary and sensitivity CSVs.
 % Public outputs use observation-based screening terminology. Geological
 % interpretations remain separate from the computed classifications.
 %
-% Expected file layout (names fixed per catchment):
-%   <catchments_root>/<CatchmentName>/ZrnPb.csv
-%   <catchments_root>/<CatchmentName>/HblAr.csv
-%   <catchments_root>/<CatchmentName>/ApHeApPb.csv
-%   <catchments_root>/<CatchmentName>/ZrnHeZrnPb.csv
+% Expected files in each catchment folder:
+%   ReferenceDistribution.csv  complete distribution used for GMM fitting
+%   ChronometerData.csv        any number of chronometer systems, long format
 %
 % -----------------------------------------------------------------------
 % OUTPUT FOLDER STRUCTURE
@@ -21,7 +19,7 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 %     output_summary.csv            — age ranges and counts by catchment and chronometer
 %     filter_code_lookup.csv        — code definitions written once per run
 %     <CatchmentName>/
-%       youngest_zircon_component/  — GMM plot and component summary
+%       target_component/           — GMM plot and component summary
 %       filter_output/              — older-bound reference (default)
 %         filter_results_full.csv   — complete one-date-per-row review table
 %         filter_results_coded.csv  — compact table using numeric lookup IDs
@@ -49,13 +47,12 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 %   K_override      if >0, use this K for ALL catchments (skip BIC)
 %   K_override_map  containers.Map of catchment name -> K override
 %                   e.g. containers.Map({"TC","RC"},{3,4})
-%   Delta           short crystallization-to-cooling interval threshold
+%   Delta           short paired-age interval threshold
 %   P_thresh        screening decision probability (default 0.65)
-%   Nmc             Monte Carlo draws per grain for ZPb GMM (default 50)
+%   Nmc             Monte Carlo draws per reference age for GMM (default 50)
 %   TargetComponentAgeRange  allowed range for the selected GMM component
 %                   mean (default [-Inf Inf]; e.g. [50 200] Ma). The GMM
-%                   still fits the full distribution. PulseAgeRange is a
-%                   deprecated compatibility alias.
+%                   still fits the full distribution.
 %   run_sensitivity false (default): writes the primary older-bound result.
 %                   true: also evaluates younger-bound and midpoint choices,
 %                   but condenses them into one comparison table rather than
@@ -81,15 +78,13 @@ arguments
     opts.P_thresh         (1,1) double  = 0.65
     opts.Nmc              (1,1) double  = 50
     opts.TargetComponentAgeRange (1,2) double = [NaN NaN]
-    opts.PulseAgeRange    (1,2) double  = [-Inf Inf] % deprecated alias
     opts.run_sensitivity  (1,1) logical = false
 end
 
 if ~isfolder(catchments_root)
     error("Catchments root folder not found: %s", catchments_root);
 end
-target_age_range = resolve_target_age_range( ...
-    opts.TargetComponentAgeRange, opts.PulseAgeRange);
+target_age_range = resolve_target_age_range(opts.TargetComponentAgeRange);
 if ~isfolder(outdir_root), mkdir(outdir_root); end
 
 % Write README on every run so it stays current with the parameters used.
@@ -128,13 +123,11 @@ for i = 1:numel(catchment_names)
     fprintf("\n=== Processing catchment: %s ===\n", cname);
 
     % -- File paths --
-    f_zpb = fullfile(cdir, "ZrnPb.csv");
-    f_ar  = fullfile(cdir, "HblAr.csv");
-    f_ap  = fullfile(cdir, "ApHeApPb.csv");
-    f_zrn = fullfile(cdir, "ZrnHeZrnPb.csv");
+    f_reference = fullfile(cdir, "ReferenceDistribution.csv");
+    f_chronometers = fullfile(cdir, "ChronometerData.csv");
 
-    required = [f_zpb, f_ar, f_ap, f_zrn];
-    labels   = ["ZrnPb.csv","HblAr.csv","ApHeApPb.csv","ZrnHeZrnPb.csv"];
+    required = [f_reference, f_chronometers];
+    labels = ["ReferenceDistribution.csv","ChronometerData.csv"];
     skip = false;
     for k = 1:numel(required)
         if ~isfile(required(k))
@@ -152,23 +145,25 @@ for i = 1:numel(catchment_names)
         fprintf("  Using manual K override = %d for %s\n", K_use, cname);
     end
 
-    % -- Step 1: infer youngest pulse (once per catchment, shared across modes) --
+    % -- Step 1: infer target component (once per catchment) --
     try
-        pulse_opts = {"Kmax", opts.Kmax, "Nmc", opts.Nmc, ...
+        target_opts = {"Kmax", opts.Kmax, "Nmc", opts.Nmc, ...
                       "BoundsMethod", opts.BoundsMethod, "NSigma", opts.NSigma, ...
                       "TargetComponentAgeRange", target_age_range};
         if K_use > 0
-            pulse_opts = [pulse_opts, {"K_override", K_use}]; %#ok<AGROW>
+            target_opts = [target_opts, {"K_override", K_use}]; %#ok<AGROW>
         end
-        pulse = infer_youngest_pulse_from_ZPb(f_zpb, ...
-            fullfile(outdir_root, cname, "youngest_zircon_component"), pulse_opts{:});
+        target = infer_target_component(f_reference, ...
+            fullfile(outdir_root, cname, "target_component"), target_opts{:});
         fprintf("  Target-component age window: %.1f - %.1f Ma  (K=%d, selection=%s)\n", ...
-            pulse.Tyoung(1), pulse.Tyoung(2), pulse.K_used, pulse.K_selection_method);
+            target.target_window_Ma(1), target.target_window_Ma(2), ...
+            target.K_used, target.K_selection_method);
         fprintf("  Candidate model-start age: %.1f Ma  (component mu=%.1f + %.0f*sigma; sigma=%.1f Ma)\n", ...
-            pulse.model_start_Ma, ...
-            pulse.mu_young, pulse.NSigma_used, pulse.sigma_young);
+            target.candidate_model_start_Ma, ...
+            target.target_component_mean_Ma, target.NSigma_used, ...
+            target.target_component_sigma_Ma);
     catch ME
-        warning("Pulse inference failed for %s: %s", cname, ME.message);
+        warning("Target-component inference failed for %s: %s", cname, ME.message);
         summary_rows{i} = make_error_row(cname);
         continue
     end
@@ -181,7 +176,7 @@ for i = 1:numel(catchment_names)
         cout = fullfile(outdir_root, cname, "filter_output");
         try
             mode_results{mi} = filter_detrital_thermo( ...
-                f_ar, f_ap, f_zrn, cout, pulse.Tyoung, ...
+                f_chronometers, cout, target.target_window_Ma, ...
                 "Delta",         opts.Delta, ...
                 "P_thresh",      opts.P_thresh, ...
                 "ReferenceMode", mode, ...
@@ -215,20 +210,23 @@ for i = 1:numel(catchment_names)
             fullfile(sensitivity_dir, "reference_boundary_comparison.csv"));
     end
 
-    % -- Collect pulse summary row --
-    summary_rows{i} = table(cname, pulse.Tyoung(1), pulse.Tyoung(2), ...
-        pulse.mu_young, pulse.sigma_young, pulse.weight_young, ...
-        pulse.model_start_Ma, pulse.NSigma_used, ...
-        string(pulse.bounds_method), pulse.pulse_age_range(1), ...
-        pulse.pulse_age_range(2), pulse.K_used, pulse.K_bic, ...
-        string(pulse.K_selection_method), pulse.K_override_applied, ...
-        pulse.Nages, pulse.Nselected, ...
-        'VariableNames', {'Catchment','target_window_lo_Ma','target_window_hi_Ma', ...
+    % -- Collect target-component summary row --
+    summary_rows{i} = table(cname, target.reference_system, ...
+        target.target_window_Ma(1), target.target_window_Ma(2), ...
+        target.target_component_mean_Ma, target.target_component_sigma_Ma, ...
+        target.target_component_weight, target.candidate_model_start_Ma, ...
+        target.NSigma_used, string(target.bounds_method), ...
+        target.target_component_age_range(1), ...
+        target.target_component_age_range(2), target.K_used, target.K_bic, ...
+        string(target.K_selection_method), target.K_override_applied, ...
+        target.Nages, target.Nselected, ...
+        'VariableNames', {'Catchment','ReferenceSystem', ...
+        'target_window_lo_Ma','target_window_hi_Ma', ...
         'target_component_mean_Ma','target_component_sigma_Ma','target_component_weight', ...
         'candidate_model_start_Ma','NSigma','BoundsMethod', ...
         'target_component_search_lo_Ma','target_component_search_hi_Ma', ...
         'K_used','K_bic_selected','K_selection_method','K_override_applied', ...
-        'N_ZPb_ages','N_ZPb_assigned'});
+        'N_reference_ages','N_reference_ages_assigned'});
 
     fprintf("  Done.\n");
 end
@@ -272,7 +270,8 @@ end % main function
 % =======================================================================
 function C = build_reference_boundary_comparison(older, younger, midpoint)
 % Condense all three reference choices into one row per dated analysis.
-key_vars = {'GrainID','PairID','AnalysisID','System','Chronometer','PairRole','Age_Ma'};
+key_vars = {'GrainID','PairID','AnalysisID','Chronometer','PairRole', ...
+    'PairStatus','UseForModel','Age_Ma'};
 assert(height(older) == height(younger) && height(older) == height(midpoint), ...
     "Reference-boundary result tables have different row counts.");
 for v = key_vars
@@ -290,8 +289,8 @@ for v = key_vars
         "Reference-boundary result rows do not align for variable %s.", v{1});
 end
 
-C = older(:, {'GrainID','PairID','AnalysisID','System','Mineral', ...
-    'Chronometer','PairRole','PairStatus','Age_Ma','Age_1sigma_Ma', ...
+C = older(:, {'GrainID','PairID','AnalysisID','Chronometer','PairRole', ...
+    'PairStatus','UseForModel','Age_Ma','Age_1sigma_Ma', ...
     'ReviewRecommended','ReviewCode'});
 
 C.PrimaryReferenceAge_Ma = older.ReferenceAge_Ma;
@@ -328,14 +327,13 @@ for i = 1:numel(catchment_names)
 
     primary = results_store{i, 1};
     if isempty(primary), continue; end
-    chronometers = unique(string(primary.Chronometer), 'stable');
-    chronometers(chronometers == "ZrnUPb") = []; % reference context only
+    chronometers = unique(string(primary.Chronometer(primary.UseForModel)), 'stable');
 
     for si = 1:numel(chronometers)
         chrono = chronometers(si);
         n_vals = nan(1, numel(modes));
         boundary_vals = nan(1, numel(modes));
-        n_total = nnz(string(primary.Chronometer) == chrono);
+        n_total = nnz(string(primary.Chronometer) == chrono & primary.UseForModel);
 
         for mi = 1:numel(modes)
             L = results_store{i, mi};
@@ -407,14 +405,15 @@ end
 % HELPERS
 % =======================================================================
 function row = make_error_row(cname)
-row = table(cname, NaN, NaN, NaN, NaN, NaN, NaN, NaN, "failed", ...
+row = table(cname, "failed", NaN, NaN, NaN, NaN, NaN, NaN, NaN, "failed", ...
     NaN, NaN, NaN, NaN, "failed", false, NaN, NaN, ...
-    'VariableNames', {'Catchment','target_window_lo_Ma','target_window_hi_Ma', ...
+    'VariableNames', {'Catchment','ReferenceSystem', ...
+    'target_window_lo_Ma','target_window_hi_Ma', ...
     'target_component_mean_Ma','target_component_sigma_Ma','target_component_weight', ...
     'candidate_model_start_Ma','NSigma','BoundsMethod', ...
     'target_component_search_lo_Ma','target_component_search_hi_Ma', ...
     'K_used','K_bic_selected','K_selection_method','K_override_applied', ...
-    'N_ZPb_ages','N_ZPb_assigned'});
+    'N_reference_ages','N_reference_ages_assigned'});
 end
 
 % =======================================================================
@@ -422,8 +421,7 @@ end
 % =======================================================================
 function write_readme(outdir_root, opts)
 % Write a run-specific guide using mechanism-neutral terminology.
-target_age_range = resolve_target_age_range( ...
-    opts.TargetComponentAgeRange, opts.PulseAgeRange);
+target_age_range = resolve_target_age_range(opts.TargetComponentAgeRange);
 
 fid = fopen(fullfile(outdir_root, "README.txt"), "w");
 fprintf(fid, "DetritalChronFilter — Detrital Thermochronology Screening Output\n");
@@ -435,7 +433,7 @@ fprintf(fid, "Terminology version: neutral-v5-named-full-and-coded\n\n");
 
 fprintf(fid, "INTERPRETATION POLICY\n");
 fprintf(fid, "---------------------\n");
-fprintf(fid, "Only a cooling age that meets the older-than-reference probability\n");
+fprintf(fid, "Only a model-candidate age that meets the older-than-reference\n");
 fprintf(fid, "threshold receives an exclusion recommendation. Paired-age order and\n");
 fprintf(fid, "short-interval patterns are review flags only. They may be informative,\n");
 fprintf(fid, "but do not independently establish a thermal mechanism or bad analysis.\n\n");
@@ -461,7 +459,7 @@ fprintf(fid, "    beside them. A flag never causes exclusion, although a flagged
 fprintf(fid, "    can be excluded independently by the older-than-reference rule.\n");
 fprintf(fid, "  output_summary.csv\n");
 fprintf(fid, "    One row per chronometer with observed age range, model-input\n");
-fprintf(fid, "    age range and median, and excluded/review/reference counts.\n");
+fprintf(fid, "    age range and median, and excluded/review/context-only counts.\n");
 fprintf(fid, "    Range comparisons are descriptive and do not apply a\n");
 fprintf(fid, "    closure-temperature ordering rule.\n\n");
 fprintf(fid, "Run-level tables are written once at the output root:\n");
@@ -475,8 +473,8 @@ if opts.run_sensitivity
     fprintf(fid, "    no duplicate per-mode result folders are created.\n\n");
 end
 fprintf(fid, "Target-component QA:\n");
-fprintf(fid, "  <CatchmentName>/youngest_zircon_component/\n");
-fprintf(fid, "    BIC curve and GMM fit to ZrnPb ages. Inspect to verify K\n");
+fprintf(fid, "  <CatchmentName>/target_component/\n");
+fprintf(fid, "    BIC curve and GMM fit to ReferenceDistribution.csv. Inspect K\n");
 fprintf(fid, "    selection and target-component interpretation before use.\n\n");
 
 fprintf(fid, "REFERENCE AND REVIEW CODES\n");
@@ -485,27 +483,26 @@ fprintf(fid, "  RT   eligible_after_reference_screen; retain unless review flag 
 fprintf(fid, "  OR1  older_than_reference; probability >= 0.90\n");
 fprintf(fid, "  OR2  older_than_reference; decision threshold <= probability < 0.90\n");
 fprintf(fid, "       OR1 and OR2 are the only codes that recommend exclusion.\n");
-fprintf(fid, "  SC1  review: short crystallization-to-cooling interval; probability >= 0.90\n");
-fprintf(fid, "  SC2  review: short interval; moderate probability\n");
-fprintf(fid, "  AOI  review: cooling age is older than paired U-Pb\n");
-fprintf(fid, "       age beyond combined 2-sigma uncertainty\n");
-fprintf(fid, "  AOU  review: nominal age order overlaps within 2-sigma\n");
+fprintf(fid, "  SI1  review: short paired-age interval; probability >= 0.90\n");
+fprintf(fid, "  SI2  review: short paired-age interval; moderate probability\n");
+fprintf(fid, "  AOI  review: expected-younger age is older than the paired\n");
+fprintf(fid, "       expected-older age beyond combined 2-sigma uncertainty\n");
+fprintf(fid, "  AOU  review: expected age order overlaps within 2-sigma\n");
 fprintf(fid, "  II   review: required uncertainty is absent/invalid\n");
-fprintf(fid, "  NA   paired-age assessment is not applicable\n");
-fprintf(fid, "  RC   zircon U-Pb target-component reference context; not screened as a model-input age\n\n");
+fprintf(fid, "  CX   UseForModel=false; retained as context, not screened\n\n");
 fprintf(fid, "The CodeID-to-code-to-definition mapping is also written as\n");
 fprintf(fid, "filter_code_lookup.csv. Numeric IDs are nominal labels only.\n");
-fprintf(fid, "Full values are reported in P_older_than_reference, P_short_interval,\n");
-fprintf(fid, "crystallization_to_cooling_interval_Ma, and interval_1sigma_Ma.\n\n");
+fprintf(fid, "Full values are reported in P_OlderThanReference, P_ShortInterval,\n");
+fprintf(fid, "PairInterval_Ma, and PairInterval_1sigma_Ma.\n\n");
 
 fprintf(fid, "SCREENING PARAMETERS USED IN THIS RUN\n");
 fprintf(fid, "-------------------------------------\n");
-fprintf(fid, "  Delta       = %.0f Ma   (short crystallization-to-cooling interval threshold)\n", opts.Delta);
+fprintf(fid, "  Delta       = %.0f Ma   (short paired-age interval threshold)\n", opts.Delta);
 fprintf(fid, "  P_thresh    = %.2f     (screening decision probability)\n", opts.P_thresh);
 fprintf(fid, "  BoundsMethod= %s\n", opts.BoundsMethod);
 fprintf(fid, "  NSigma      = %.1f     (component-sigma window multiplier)\n", opts.NSigma);
 fprintf(fid, "  Kmax        = %d        (max GMM components tested by BIC)\n", opts.Kmax);
-fprintf(fid, "  Nmc         = %d        (Monte Carlo draws per grain for ZPb GMM)\n", opts.Nmc);
+fprintf(fid, "  Nmc         = %d        (Monte Carlo draws per reference age)\n", opts.Nmc);
 fprintf(fid, "  Component search = %.1f to %.1f Ma (allowed selected-component mean)\n", ...
     target_age_range(1), target_age_range(2));
 fprintf(fid, "                   Ages outside this range remain in the GMM fit but\n");
@@ -523,16 +520,12 @@ fclose(fid);
 fprintf("  README written to: %s\n", fullfile(outdir_root, "README.txt"));
 end
 
-function range = resolve_target_age_range(primary, legacy)
-% Prefer the neutral public name while preserving the former API.
+function range = resolve_target_age_range(primary)
 if all(isnan(primary))
-    range = legacy;
+    range = [-Inf Inf];
 elseif any(isnan(primary))
     error("TargetComponentAgeRange must contain two numeric bounds.");
 else
-    if ~isequal(legacy, [-Inf Inf]) && ~isequal(primary, legacy)
-        error("Specify either TargetComponentAgeRange or PulseAgeRange, not conflicting values for both.");
-    end
     range = primary;
 end
 assert(range(1) < range(2), ...

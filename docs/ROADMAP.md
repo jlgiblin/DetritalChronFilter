@@ -1,81 +1,41 @@
-# Roadmap: modular component selection and chronometer input design
+# Roadmap
 
-Status: future design only. The features below are **not implemented in v0.1.0**. The supported release uses the documented four-file input layout, GMM component estimation, BIC or a manual K override, and youngest-eligible component selection.
+DetritalChronFilter now uses a generic two-file input design:
 
-## 1. Separate estimation from selection
+- `ReferenceDistribution.csv` supplies the complete age distribution used to estimate the target component.
+- `ChronometerData.csv` supplies one or more user-labelled chronometer systems in long format.
+- Optional `PairID`, `PairRole`, and `UseForModel` fields support paired-age review and context-only observations without interpreting chronometer names.
 
-The public interface should distinguish:
+The items below are possible future additions, not features of the current release candidate.
 
-1. `ComponentMethod`: how candidate age components are estimated.
-2. `ComponentSelection`: which candidate is used as the target.
+## 1. Additional component-estimation methods
+
+The current implementation fits Gaussian mixture models and chooses the youngest eligible component, using either BIC or a reviewed manual K override. Future versions could separate three choices more explicitly:
+
+1. `ComponentMethod`: how candidate components are estimated.
+2. `ComponentSelection`: which candidate becomes the target.
 3. `WindowMethod`: how the selected component becomes an age window.
 
-This prevents “youngest component” from concealing multiple scientific choices.
+Possible methods include KDE peak finding, a directly supplied user window, or externally supplied component memberships. Each would require its own validation and transparent provenance in the output; these methods should not be presented as scientifically interchangeable.
 
-### Proposed component-estimation methods
+## 2. Additional target-selection rules
 
-| Option | Intended use | Important limitation |
-|---|---|---|
-| `gmm` | Current parametric Gaussian-mixture workflow | Component number and Gaussian form require checking |
-| `kde_peak` | Exploratory mode finding without assuming Gaussian components | Peaks depend on bandwidth and are not automatically geological populations |
-| `user_window` | Reproduce a published or independently justified target window | Not a statistical estimate from the supplied sample |
-| `external_membership` | Import component labels or probabilities from another reviewed workflow | Interpretation depends on the external method |
+Possible future selection rules include the component nearest a user-supplied age, the largest-weight eligible component, or a component chosen after inspecting the QA plot. The current `TargetComponentAgeRange` and manual K override already allow users to constrain and review the GMM result without silently replacing it.
 
-For GMM, `ModelCriterion` should allow `bic` (default) or `aic`, while preserving an explicit component-count override.
+## 3. More complex analytical relationships
 
-### Proposed component-selection rules
+The current pair design intentionally supports either:
 
-| Option | Selection rule |
-|---|---|
-| `youngest_eligible` | Youngest component whose mean lies in `TargetComponentAgeRange` (current behavior) |
-| `nearest_age` | Component mean nearest a user-supplied `TargetAge_Ma` |
-| `largest_weight` | Highest-weight component within `TargetComponentAgeRange` |
-| `component_index` | User selects a component after inspecting QA plots |
-| `user_window` | No component selection; supplied bounds are used directly |
+- two observations with blank roles, which records a relationship without testing age order; or
+- exactly one `expected_younger` and one `expected_older` observation.
 
-Every output should record the method, selection rule, parameter values, selected component, and whether the choice was automatic or user-specified.
+A future version could support groups containing more than two analyses or other user-defined relationship tests. Such an extension should retain explicit roles and avoid inferring geologic meaning from chronometer labels.
 
-Youngest-grain and youngest-cluster estimators used for maximum depositional age should not be presented as interchangeable target-component estimators. They answer a different question unless the study objective is specifically maximum depositional age.
+## 4. Scope boundary with MultichronFitTSF
 
-## 2. Generic chronometer schema
+DetritalChronFilter does not use closure-temperature metadata or impose an ordering among unpaired chronometer distributions. Its reference screen is the same for every row marked `UseForModel=true`; paired-age order is evaluated only when the user explicitly supplies pair roles.
 
-Use one long-format observation table rather than a separate hard-coded file for every mineral–method combination. Keep the current four-file layout as an import adapter for existing projects.
-
-Required observation fields:
-
-- `GrainID`
-- `SystemID`
-- `Age_Ma`
-- `Age_1SE_Ma`
-
-Optional paired-age fields:
-
-- `PairedAge_Ma`
-- `PairedAge_1SE_Ma`
-- `PairType`
-
-An unpaired apatite or zircon (U–Th)/He result leaves the paired fields blank. It can still be evaluated against the reference age, but it cannot be assigned a crystallization-to-cooling interval class.
-
-A `SystemID` is only a display/grouping label; it does not imply a closure temperature or change the reference-age calculation. The presence of a valid paired crystallization age determines whether the paired-age checks apply. This supports hornblende Ar/Ar, paired or unpaired apatite He, paired or unpaired zircon He, and user-defined systems without changing the core classifier.
-
-## 3. Scope boundary with MultichronFitTSF
-
-DetritalChronFilter does not need closure-temperature metadata. Its common operation is age-based: all cooling-age observations are assessed relative to the selected zircon U–Pb reference, and observations with paired crystallization ages receive the additional age-order and interval checks.
-
-Chronometer temperature ordering belongs in MultichronFitTSF, where it is used to generate a synthetic age–elevation transect. Keeping that information downstream avoids implying that DetritalChronFilter applies different reference-age rules to different chronometers.
-
-If closure-temperature ranges or kinetic models are later made user-adjustable, they should be implemented and documented in MultichronFitTSF rather than added to this filter.
-
-## 4. Implementation order
-
-1. Add and validate the generic long-format importer while preserving current numerical results.
-2. Add paired/unpaired handling; determine interval-screen applicability directly from the presence of paired ages.
-3. Refactor GMM estimation and component selection into separate functions.
-4. Add `user_window`, GMM criterion choice, and component-selection rules.
-5. Add KDE peak selection only with bandwidth sensitivity and bootstrap stability outputs.
-6. Hand the screened ages and system labels to MultichronFitTSF; keep temperature-ordering logic there.
-
-This order keeps the public code flexible without implying that all user-selectable settings are scientifically equivalent.
+Chronometer temperature ordering belongs in MultichronFitTSF, where it can inform construction and review of synthetic age-elevation transects. Keeping that logic downstream avoids implying that this filter applies different reference-age rules to different chronometer systems.
 
 ## Supporting literature
 

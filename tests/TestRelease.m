@@ -46,15 +46,13 @@ classdef TestRelease < matlab.unittest.TestCase
 
     methods (Test)
         function versionIsReleaseCandidate(testCase)
-            testCase.verifyEqual(detrital_chron_filter_version(), "0.1.0-rc1");
+            testCase.verifyEqual(detrital_chron_filter_version(), "0.1.0-rc2");
         end
 
         function returnedFieldNamesMatchPublicTerminology(testCase)
             catchment_dir = fullfile(testCase.InputDir, "CatchmentA");
             result = filter_detrital_thermo( ...
-                fullfile(catchment_dir, "HblAr.csv"), ...
-                fullfile(catchment_dir, "ApHeApPb.csv"), ...
-                fullfile(catchment_dir, "ZrnHeZrnPb.csv"), ...
+                fullfile(catchment_dir, "ChronometerData.csv"), ...
                 fullfile(testCase.WorkDir, "direct_filter_check"), ...
                 [85.4 94.7], WriteOutputs=false);
             testCase.verifyTrue(isfield(result, "filter_results"));
@@ -163,11 +161,11 @@ classdef TestRelease < matlab.unittest.TestCase
                 testCase.verifyEqual(coded.ReviewFlagID, expected_review_ids);
 
                 component_dir = fullfile(testCase.OutputDir, catchment, ...
-                    "youngest_zircon_component");
+                    "target_component");
                 testCase.verifyTrue(isfile(fullfile(component_dir, ...
-                    "youngest_zircon_component_plot.png")));
+                    "target_component_plot.png")));
                 testCase.verifyTrue(isfile(fullfile(component_dir, ...
-                    "youngest_zircon_component_summary.csv")));
+                    "target_component_summary.csv")));
                 testCase.verifyTrue(isfile(fullfile(testCase.OutputDir, catchment, ...
                     "sensitivity", "reference_boundary_comparison.csv")));
             end
@@ -176,12 +174,42 @@ classdef TestRelease < matlab.unittest.TestCase
         function templatesUseOneSigma(testCase)
             template_dir = fullfile(testCase.RepoDir, "input_templates");
             files = dir(fullfile(template_dir, "*.csv"));
+            testCase.verifyEqual(numel(files), 2);
             for i = 1:numel(files)
                 headers = string(readcell(fullfile(files(i).folder, files(i).name), ...
                     Range="1:1"));
-                testCase.verifyTrue(any(contains(headers, "1sigerr")));
+                testCase.verifyTrue(any(headers == "Age_1sigma_Ma"));
                 testCase.verifyFalse(any(contains(headers, "2sigerr")));
             end
+        end
+
+        function arbitrarySingleChronometerIsSupported(testCase)
+            input_file = fullfile(testCase.WorkDir, "single_chronometer.csv");
+            T = table(repmat("CustomSystem", 3, 1), ["G1";"G2";"G3"], ...
+                [40;50;120], [1;1;2], ...
+                'VariableNames', {'Chronometer','GrainID','Age_Ma','Age_1sigma_Ma'});
+            writetable(T, input_file);
+            result = filter_detrital_thermo(input_file, ...
+                fullfile(testCase.WorkDir, "single_output"), [80 100], ...
+                WriteOutputs=false);
+            testCase.verifyEqual(unique(result.filter_results.Chronometer), ...
+                "CustomSystem");
+            testCase.verifyEqual(height(result.filter_results), 3);
+            testCase.verifyEqual(nnz(result.filter_results.ModelInclude), 2);
+            testCase.verifyEqual(nnz(result.filter_results.Action == "exclude"), 1);
+        end
+
+        function referenceSystemLabelIsGeneric(testCase)
+            source = fullfile(testCase.InputDir, "CatchmentA", ...
+                "ReferenceDistribution.csv");
+            T = readtable(source, Delimiter=",", TextType="string");
+            T.ReferenceSystem(:) = "RutileUPb";
+            input_file = fullfile(testCase.WorkDir, "generic_reference.csv");
+            writetable(T, input_file);
+            result = infer_target_component(input_file, ...
+                fullfile(testCase.WorkDir, "generic_reference_output"), ...
+                K_override=3, Nmc=2);
+            testCase.verifyEqual(result.reference_system, "RutileUPb");
         end
     end
 end

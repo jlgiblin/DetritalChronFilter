@@ -1,85 +1,124 @@
 # DetritalChronFilter
 
-A MATLAB workflow for purpose-specific, probabilistic screening of detrital thermochronologic data using a selected statistical component of the zircon U–Pb age distribution as the reference.
+A MATLAB workflow for purpose-specific, probabilistic screening of detrital
+chronometer ages against a selected component of a user-defined reference age
+distribution.
 
-Current release candidate: **v0.1.0-rc1**. This version intentionally supports the documented four-file input layout. Generic chronometer imports and additional component-selection methods are planned, but are not part of v0.1.0.
+Current release candidate: **v0.1.0-rc2**.
 
-## Documentation
+## What the program does
 
-- [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) provides the complete setup,
-  operation, output, quality-control, troubleshooting, and reporting guidance.
-- [`docs/COMMAND_GUIDE.md`](docs/COMMAND_GUIDE.md) is a short command reference.
-- [`input_templates/INPUT_DATA_CHECKLIST.md`](input_templates/INPUT_DATA_CHECKLIST.md)
-  summarizes input preparation.
-- [`CHANGELOG.md`](CHANGELOG.md) records release changes.
+For each catchment, DetritalChronFilter:
 
-## Terminology and decision policy
+1. fits Gaussian mixture models to the complete reference age distribution;
+2. selects the youngest eligible component, using BIC or a documented manual K;
+3. defines a target-component window and reference boundary;
+4. calculates the probability that every model-candidate age is older than that
+   reference;
+5. calculates optional paired-age order and interval diagnostics when the user
+   supplies pair metadata; and
+6. writes full, coded, model-input, excluded-age, review, summary, and QA outputs.
 
-The public results describe calculated age relationships rather than assigning a geological cause to an individual analysis.
+Only the older-than-reference result recommends exclusion. Pair diagnostics are
+review information and never independently exclude an age.
 
-- `older_than_reference` means that the probability of an age being older than the selected reference reaches the user-set threshold. This is the only result that recommends exclusion.
-- `eligible_after_reference_screen` means that an age did not reach that exclusion threshold.
-- `age_order_inconsistent`, `age_order_unresolved`, and `short_crystallization_cooling_interval` are review flags. They do not automatically exclude an age.
-- `reference_context_not_screened` identifies paired zircon U–Pb dates that provide reference context but are not candidate model-input ages.
-
-Users retain responsibility for interpreting the geological cause of these patterns and for deciding whether review-flagged ages suit their research question.
-
-## Workflow
-
-1. Fit Gaussian mixture models to each catchment's complete valid detrital zircon U–Pb distribution.
-2. Select the youngest statistical component whose mean falls within `TargetComponentAgeRange`. Components outside this search range remain in the fit but cannot be selected.
-3. Define the target-component window and use its older edge as the primary reference age.
-4. Calculate each eligible date's probability of being older than that reference.
-5. Calculate paired-age order and crystallization-to-cooling interval diagnostics as non-excluding review information.
-6. Write a small set of analysis-level, model-input, excluded-age, summary, and QA outputs.
-
-Supported systems are hornblende 40Ar/39Ar, apatite (U–Th)/He with paired apatite U–Pb, and zircon (U–Th)/He with paired zircon U–Pb.
+Chronometer and reference-system names are metadata. The program does not infer
+mineral type, closure temperature, kinetics, or expected age order from a label.
 
 ## Requirements
 
 - MATLAB R2021a or later
 - Statistics and Machine Learning Toolbox
+- Ages and absolute 1σ analytical uncertainties reported in Ma
 
 ## Input layout
 
-Place input CSVs in one folder per catchment:
+Each catchment folder contains two CSV files:
 
 ```text
 Catchments/
 ├── CatchmentA/
-│   ├── ZrnPb.csv
-│   ├── HblAr.csv
-│   ├── ApHeApPb.csv
-│   └── ZrnHeZrnPb.csv
+│   ├── ReferenceDistribution.csv
+│   └── ChronometerData.csv
 └── CatchmentB/
-    └── ...
+    ├── ReferenceDistribution.csv
+    └── ChronometerData.csv
 ```
 
-Required columns are:
+### `ReferenceDistribution.csv`
 
-| File | Columns |
-|---|---|
-| `ZrnPb.csv` | `ZrnPbDate`, `ZrnPb1sigerr` |
-| `HblAr.csv` | `HblGrain`, `HblArDate`, `HblAr1sigerr` |
-| `ApHeApPb.csv` | `ApGrain`, `ApHeDate`, `ApHe1sigerr`, `ApPbDate`, `ApPb1sigerr` |
-| `ZrnHeZrnPb.csv` | `ZrnGrain`, `ZrnHeDate`, `ZrnHe1sigerr`, `ZrnPbDate`, `ZrnPb1sigerr` |
+```csv
+ReferenceSystem,GrainID,Age_Ma,Age_1sigma_Ma
+ZrnUPb,R001,92.4,1.3
+ZrnUPb,R002,95.1,1.1
+ZrnUPb,R003,181.6,2.2
+```
 
-All datasets must include absolute 1σ uncertainties in Ma, using the required column names ending in `1sigerr`. Other uncertainty conventions are not accepted.
+| Column | Requirement | Meaning |
+|---|---|---|
+| `ReferenceSystem` | Required | One system label repeated for the complete distribution; metadata only |
+| `GrainID` | Required | Unique identifier for each reference age |
+| `Age_Ma` | Required | Measured age in Ma |
+| `Age_1sigma_Ma` | Required | Absolute 1σ analytical uncertainty in Ma |
+
+This file must contain the complete distribution supplied to the mixture model,
+not only ages believed to belong to the target component. The system may be
+zircon U–Pb or another independently justified reference chronometer.
+
+### `ChronometerData.csv`
+
+```csv
+Chronometer,GrainID,Age_Ma,Age_1sigma_Ma,PairID,PairRole,UseForModel
+ZrnHe,Z001,48.2,2.1,Zrn-Z001,expected_younger,true
+ZrnUPb,Z001,92.4,1.3,Zrn-Z001,expected_older,false
+ApHe,A001,35.8,1.8,Ap-A001,expected_younger,true
+ApUPb,A001,65.1,1.1,Ap-A001,expected_older,true
+HblAr,H001,78.2,1.5,,,true
+```
+
+| Column | Requirement | Meaning |
+|---|---|---|
+| `Chronometer` | Required | User-defined grouping label; not scientifically interpreted by the code |
+| `GrainID` | Required | Identifier unique within a chronometer |
+| `Age_Ma` | Required | Measured age in Ma |
+| `Age_1sigma_Ma` | Required | Absolute 1σ analytical uncertainty in Ma |
+| `PairID` | Optional | Shared identifier for two analyses of one grain |
+| `PairRole` | Optional | `expected_younger`, `expected_older`, or blank |
+| `UseForModel` | Optional | `true` or `false`; blank or omitted defaults to `true` |
+
+The optional column headings are included in the template. Users without paired
+analyses leave `PairID` and `PairRole` blank.
+
+When `PairRole` is used, a `PairID` must occur exactly twice, with one
+`expected_younger` and one `expected_older` row. Two blank roles preserve the
+pair relationship without requesting an age-order calculation.
+
+Set `UseForModel=false` when an age is included only to provide pair or contextual
+information. Such a row is retained in the full results but is not screened as a
+model-input candidate.
+
+`ChronometerData.csv` may contain one chronometer or any number of chronometers.
 
 ## Quick start
 
-Download or clone the repository, open MATLAB in the repository folder, and add the code to the MATLAB path:
+Open MATLAB in the repository folder and add it to the path:
 
 ```matlab
 addpath(pwd)
+run_detrital_pipeline("Catchments", "Output")
 ```
+
+To limit which fitted component means can be selected:
 
 ```matlab
 run_detrital_pipeline("Catchments", "Output", ...
     TargetComponentAgeRange=[50 200])
 ```
 
-The default run creates one primary result set per catchment:
+The mixture model still uses every valid age in `ReferenceDistribution.csv`.
+The range affects component selection only.
+
+## Outputs
 
 ```text
 Output/
@@ -88,7 +127,9 @@ Output/
 ├── output_summary.csv
 ├── filter_code_lookup.csv
 └── CatchmentA/
-    ├── youngest_zircon_component/
+    ├── target_component/
+    │   ├── target_component_plot.png
+    │   └── target_component_summary.csv
     └── filter_output/
         ├── filter_results_full.csv
         ├── filter_results_coded.csv
@@ -98,159 +139,69 @@ Output/
         └── output_summary.csv
 ```
 
-The six catchment tables have distinct roles:
-
 | File | Purpose |
 |---|---|
-| `filter_results_full.csv` | Complete review table, with one dated analysis per row and full explanations |
-| `filter_results_coded.csv` | Compact publication table using numeric result and review IDs |
-| `model_input_ages.csv` | Dates eligible for downstream modeling, including non-excluded dates carrying review flags |
-| `excluded_ages.csv` | Only dates that meet the older-than-reference exclusion rule |
-| `review_flags.csv` | All dates carrying a review flag, with the related paired date repeated beside them |
-| `output_summary.csv` | One row per chronometer with observed and model-input age ranges, model-input median, and exclusion/review counts |
+| `filter_results_full.csv` | Complete one-row-per-analysis results with probabilities and explanations |
+| `filter_results_coded.csv` | Compact table using numeric IDs from `filter_code_lookup.csv` |
+| `model_input_ages.csv` | Ages eligible for downstream modeling, including non-excluding review flags |
+| `excluded_ages.csv` | Only model-candidate ages assigned OR1 or OR2 |
+| `review_flags.csv` | All review-flagged rows with the related paired age beside them when available |
+| Catchment `output_summary.csv` | Observed and model-input age ranges and counts for each chronometer |
+| Root `pipeline_summary.csv` | Reference system, target-component parameters, K selection, and candidate start age |
+| Root `output_summary.csv` | Combined chronometer summaries across catchments |
 
-Paired measurements occupy separate rows in both filter-results tables and share `GrainID` and `PairID`. This preserves the relationship while allowing, for example, apatite He and apatite U–Pb dates to have separate filtering decisions. The file is named `excluded_ages.csv`, rather than “excluded grains,” because two dates from one paired grain may receive different results.
+The summary reports observed minimum and maximum ages plus the minimum, median,
+and maximum of the retained model inputs. These descriptive ranges help users
+spot cross-chronometer patterns, but the code does not apply a closure-temperature
+ordering rule.
 
-The root-level `pipeline_summary.csv` records target-component and model-start information for all catchments. The root-level `output_summary.csv` combines the chronometer summaries across catchments, and `filter_code_lookup.csv` defines the numeric IDs once for the entire run.
+## Reference and review codes
 
-The observed minimum and maximum include every valid reported date. The model-input minimum, median, and maximum describe only dates retained after the reference screen, including non-excluding review flags. Comparing these ranges can reveal patterns worth reviewing, but the summary does not assign closure temperatures or label a cross-chronometer ordering problem.
+| Code | Role | Meaning | Default action |
+|---|---|---|---|
+| `RT` | Reference screen | Older-than-reference probability is below the threshold | Retain |
+| `OR1` | Reference screen | High probability that the age is older than the reference | Exclude |
+| `OR2` | Reference screen | Moderate probability that the age is older than the reference | Exclude |
+| `SI1` | Pair review | High probability of a short paired-age interval | Review only |
+| `SI2` | Pair review | Moderate probability of a short paired-age interval | Review only |
+| `AOI` | Pair review | Expected-younger age is older beyond combined 2σ uncertainty | Review only |
+| `AOU` | Pair review | Expected order is reversed nominally but unresolved within combined 2σ | Review only |
+| `II` | Reference/review | Required age or uncertainty is missing or nonpositive | Review |
+| `CX` | Context | `UseForModel=false`; row is not screened as model input | Context only |
+| `NF` | Review | No separate review flag | None |
 
-In the full table, `ReviewCode="NF"` means that no separate review flag was assigned. The corresponding coded-table value is `ReviewFlagID=0`. All numeric IDs map directly to `filter_code_lookup.csv`; they are identifiers, not ranked scores. Unpaired rows use `PairID="not_paired"` so spreadsheet and MATLAB imports preserve the column as text.
+All input uncertainty columns are 1σ. AOI/AOU use two times the combined 1σ
+uncertainty as an internal overlap criterion; this is not a 2σ input convention.
 
-A review flag never causes exclusion. A row in `review_flags.csv` can nevertheless have `Action="exclude"` if that same date independently meets the older-than-reference rule; `ActionReason` makes that distinction explicit.
+## Main options
 
-For reliable programmatic import in MATLAB, specify the comma delimiter explicitly:
+| Option | Default | Meaning |
+|---|---:|---|
+| `Kmax` | `6` | Largest component count evaluated by BIC |
+| `K_override` | `0` | Fixed K for all catchments; zero uses BIC |
+| `K_override_map` | empty | Catchment-specific K values in a `containers.Map` |
+| `TargetComponentAgeRange` | unrestricted | Eligible component-mean range |
+| `BoundsMethod` | `"gmm_sigma_window"` | Target-window method |
+| `NSigma` | `1.0` | Component-standard-deviation multiplier |
+| `P_thresh` | `0.65` | OR2 and SI2 probability threshold |
+| `Delta` | `8` Ma | Upper bound for the optional short-pair-interval review |
+| `Nmc` | `50` | Monte Carlo draws per reference age |
+| `run_sensitivity` | `false` | Compare older edge, midpoint, and younger edge |
 
-```matlab
-T = readtable("filter_results_full.csv", ...
-    Delimiter=",", VariableNamingRule="preserve", TextType="string");
-```
+## Examples and testing
 
-Explicit delimiter selection prevents MATLAB from mistaking prose-containing CSV files for whitespace-delimited text.
-
-## Optional reference-boundary comparison
-
-The default is `run_sensitivity=false`. To compare three reference choices without producing three duplicate folder trees:
-
-```matlab
-run_detrital_pipeline("Catchments", "Output", ...
-    TargetComponentAgeRange=[50 200], ...
-    run_sensitivity=true)
-```
-
-This adds:
-
-```text
-Output/
-├── reference_boundary_sensitivity_summary.csv
-└── CatchmentA/
-    └── sensitivity/
-        └── reference_boundary_comparison.csv
-```
-
-The root summary reports the actual boundary ages and resulting model-input counts for the primary older edge, midpoint, and younger edge. The catchment comparison gives analysis-level results side by side. This is a stress test of the boundary choice—not a separate “conservative” interpretation—and the code no longer assigns vague high/moderate/low sensitivity labels.
-
-## Included examples
-
-Run the complete synthetic example from the repository root:
+Run the complete synthetic example:
 
 ```matlab
 run("examples/synthetic/run_example.m")
 ```
 
-The example writes generated results to `examples/synthetic/output/`, which is ignored by Git.
-
-## Reference and review codes
-
-| Code | Role | Meaning | Action |
-|---|---|---|---|
-| `RT` | Reference screen | Probability is below the exclusion threshold | Retain unless a review flag applies |
-| `OR1` | Reference screen | High probability that the date is older than the reference | Exclude |
-| `OR2` | Reference screen | Moderate probability that the date is older than the reference | Exclude |
-| `SC1` | Review | High probability of a short crystallization-to-cooling interval | Review; do not exclude |
-| `SC2` | Review | Moderate probability of a short interval | Review; do not exclude |
-| `AOI` | Review | Cooling age is older than its paired U–Pb age beyond combined 2σ uncertainty | Review; do not exclude |
-| `AOU` | Review | Nominal age order is unexpected but overlaps within combined 2σ uncertainty | Review; do not exclude |
-| `II` | Reference/review | A required date or uncertainty is missing or nonpositive | Review |
-| `NA` | Paired-age status | A paired age was not provided | Not applicable |
-| `RC` | Reference context | Paired zircon U–Pb date provides target-component context and is not screened as model input | Reference only |
-
-`CodeID` values in the lookup table are nominal identifiers only. They are not ranks or probability values.
-
-## Important columns in `filter_results_full.csv`
-
-| Column | Meaning |
-|---|---|
-| `GrainID`, `PairID` | Identifiers that keep paired dates linked |
-| `Chronometer` | Date type for the individual row |
-| `PairRole` | `cooling_age`, `single_age`, or `paired_u_pb_age` |
-| `Age_Ma`, `Age_1sigma_Ma` | Date and absolute 1σ uncertainty |
-| `ReferenceAge_Ma` | Reference boundary used for the calculation |
-| `P_OlderThanReference` | Probability that the row's date is older than the reference |
-| `ReferenceClass`, `ReferenceCode` | Reference-screen result in full and coded form |
-| `ReviewRecommended`, `ReviewCode` | Non-excluding review status |
-| `P_ShortInterval` | Probability that the paired interval is positive and shorter than `Delta` |
-| `PairInterval_Ma` | Paired U–Pb date minus cooling age |
-| `Action` | `retain`, `review`, `exclude`, or `reference_only` |
-| `ModelInclude` | Whether the date appears in `model_input_ages.csv` |
-| `P_Threshold` | Probability threshold used for the decision |
-| `ShortIntervalThreshold_Ma` | Interval threshold used for SC1/SC2, where applicable |
-| `ActionReason` | Plain-language statement combining the numerical result, threshold, and action |
-
-## Main options
-
-```matlab
-run_detrital_pipeline("Catchments", "Output", ...
-    NSigma=1.0, ...
-    BoundsMethod="gmm_sigma_window", ...
-    Delta=8, ...
-    P_thresh=0.65, ...
-    Kmax=6, ...
-    K_override=0, ...
-    Nmc=50, ...
-    TargetComponentAgeRange=[50 200], ...
-    run_sensitivity=false)
-```
-
-- `TargetComponentAgeRange` controls which component means are eligible for selection; it does not remove dates before fitting.
-- `BoundsMethod="gmm_sigma_window"` defines the component window as its mean ± `NSigma` × component standard deviation.
-- `Delta` defines the upper bound of the short-interval review calculation. It is a user-set sensitivity parameter, not a universal process boundary.
-- `P_thresh` is the probability required to assign an older-than-reference result or short-interval review flag.
-- `K_override` or `K_override_map` can be used after inspecting the mixture-model QA output.
-
-## Candidate model-start age
-
-The pipeline reports:
-
-```text
-candidate_model_start_Ma = target_component_mean_Ma + NSigma × target_component_sigma_Ma
-```
-
-This is a workflow-derived candidate boundary. `target_component_sigma_Ma` describes dispersion within the selected statistical component; it is not uncertainty on the candidate model-start age.
-
-## Scientific cautions
-
-- Mixture components remain statistical components until geological meaning is evaluated using independent evidence.
-- A short paired interval or unexpected nominal age order does not uniquely determine its cause.
-- An age passing the reference screen is eligible for the stated workflow; it is not thereby validated for every possible use.
-- Single-system ages without paired U–Pb dates cannot be evaluated for paired-age order or interval.
-- Large analytical uncertainty can keep a probability below the decision threshold. Inspect the probabilities and uncertainties, not only the action label.
-- The automatic model-input table is purpose-specific. Other research questions may require different inclusion decisions.
-
-## Testing
-
-Run the release test from the repository root:
+Run the release tests:
 
 ```matlab
 run_release_tests
 ```
 
-The tests generate temporary synthetic data, run automatic and overridden component selection, verify the output layout and public result-field names, check the coded/full table mapping, and confirm that review flags do not cause exclusion.
-
-## Scope and roadmap
-
-The supported v0.1.0 interface is the four-file catchment layout documented above. Proposed generic chronometer input, unpaired-system support, and alternative component estimators are described in [`docs/ROADMAP.md`](docs/ROADMAP.md) and should not be cited as implemented features.
-
-## Citation status
-
-Citation metadata are provided in `CITATION.cff`. An archived-release DOI can be added after the public v0.1.0 release is connected to an archival service such as Zenodo.
+See `docs/USER_MANUAL.md` for detailed preparation, QA, troubleshooting, and
+reporting guidance. Citation metadata are in `CITATION.cff`; the software is
+distributed under the MIT License.
