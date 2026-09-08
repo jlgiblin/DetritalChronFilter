@@ -1,6 +1,6 @@
 # Input-data checklist
 
-Use the two header-only CSV templates in this folder for each catchment.
+Use the two header-only CSV templates in this folder for each sample.
 
 ## Reference distribution
 

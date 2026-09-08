@@ -1,8 +1,8 @@
 function generate_synthetic_data(outdir)
 % GENERATE_SYNTHETIC_DATA
-% Creates three synthetic catchment datasets for testing DetritalChronFilter.
+% Creates three synthetic sample datasets for testing DetritalChronFilter.
 %
-% Each catchment has a known target component (defined by mu and
+% Each sample has a known target component (defined by mu and
 % sigma) and a mix of analyses designed to exercise all screening paths:
 %   - eligible_after_reference_screen
 %   - older_than_reference
@@ -11,9 +11,9 @@ function generate_synthetic_data(outdir)
 %
 % With the default gmm_sigma_window BoundsMethod and NSigma=1.0, the expected
 % target-component windows (mu +/- 1*sigma) are:
-%   CatchmentA: ~85–95 Ma  (mu=90, sigma=5)
-%   CatchmentB: ~69–81 Ma  (mu=75, sigma=6)
-%   CatchmentC: ~93–107 Ma (mu=100, sigma=7)
+%   SampleA: ~85–95 Ma  (mu=90, sigma=5)
+%   SampleB: ~69–81 Ma  (mu=75, sigma=6)
+%   SampleC: ~93–107 Ma (mu=100, sigma=7)
 %
 % Usage:
 %   generate_synthetic_data              % writes to inputs_generated/
@@ -26,39 +26,39 @@ end
 
 rng(42);  % reproducible
 
-% ---- Define three synthetic catchments ----
-catchments = struct();
+% ---- Define three synthetic samples ----
+samples = struct();
 
-% Catchment A: clear target component ~90 Ma, well-separated from older components
-catchments(1).name         = "CatchmentA";
-catchments(1).target_mu    = 90;    % Ma — target-component mean
-catchments(1).target_sig   = 5;     % Ma — component width
-catchments(1).older_mus    = [140, 200];  % older zircon U-Pb components
-catchments(1).older_sigs   = [10, 15];
-catchments(1).older_weights = [0.35, 0.25];  % fraction of ZPb grains
-catchments(1).young_weight  = 0.40;
+% Sample A: clear target component ~90 Ma, well-separated from older components
+samples(1).name         = "SampleA";
+samples(1).target_mu    = 90;    % Ma — target-component mean
+samples(1).target_sig   = 5;     % Ma — component width
+samples(1).older_mus    = [140, 200];  % older zircon U-Pb components
+samples(1).older_sigs   = [10, 15];
+samples(1).older_weights = [0.35, 0.25];  % fraction of reference ages
+samples(1).young_weight  = 0.40;
 
-% Catchment B: target component ~75 Ma, closer to an older component
-catchments(2).name         = "CatchmentB";
-catchments(2).target_mu    = 75;
-catchments(2).target_sig   = 6;
-catchments(2).older_mus    = [110, 170];
-catchments(2).older_sigs   = [8, 20];
-catchments(2).older_weights = [0.40, 0.20];
-catchments(2).young_weight  = 0.40;
+% Sample B: target component ~75 Ma, closer to an older component
+samples(2).name         = "SampleB";
+samples(2).target_mu    = 75;
+samples(2).target_sig   = 6;
+samples(2).older_mus    = [110, 170];
+samples(2).older_sigs   = [8, 20];
+samples(2).older_weights = [0.40, 0.20];
+samples(2).young_weight  = 0.40;
 
-% Catchment C: target component ~100 Ma, larger uncertainties
-catchments(3).name         = "CatchmentC";
-catchments(3).target_mu    = 100;
-catchments(3).target_sig   = 7;
-catchments(3).older_mus    = [150, 220];
-catchments(3).older_sigs   = [12, 18];
-catchments(3).older_weights = [0.30, 0.30];
-catchments(3).young_weight  = 0.40;
+% Sample C: target component ~100 Ma, larger uncertainties
+samples(3).name         = "SampleC";
+samples(3).target_mu    = 100;
+samples(3).target_sig   = 7;
+samples(3).older_mus    = [150, 220];
+samples(3).older_sigs   = [12, 18];
+samples(3).older_weights = [0.30, 0.30];
+samples(3).young_weight  = 0.40;
 
-% ---- Generate data for each catchment ----
-for ci = 1:numel(catchments)
-    c    = catchments(ci);
+% ---- Generate data for each sample ----
+for ci = 1:numel(samples)
+    c    = samples(ci);
     cdir = fullfile(outdir, c.name);
     if ~isfolder(cdir), mkdir(cdir); end
 
@@ -203,7 +203,7 @@ for ci = 1:numel(catchments)
         c.name, c.target_mu, c.target_sig, c.target_mu - c.target_sig, c.target_mu + c.target_sig);
 end
 
-fprintf("\nSynthetic catchment data written to: %s\n", outdir);
+fprintf("\nSynthetic sample data written to: %s\n", outdir);
 fprintf("Run  run_example  to process with the full pipeline.\n");
 
 end

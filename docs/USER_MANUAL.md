@@ -20,7 +20,7 @@ The program does not convert 2σ inputs.
 
 | File or folder | Purpose |
 |---|---|
-| `run_detrital_pipeline.m` | Recommended entry point for one or more catchments |
+| `run_detrital_pipeline.m` | Recommended entry point for one or more samples |
 | `infer_target_component.m` | Fits reference-distribution mixture models and selects the target component |
 | `filter_detrital_thermo.m` | Applies the reference screen and optional pair diagnostics |
 | `input_templates/` | Header-only templates and preparation checklist |
@@ -30,20 +30,22 @@ The program does not convert 2σ inputs.
 
 ## 3. Folder structure
 
-Create one folder per catchment. Each folder must contain the two recognized
+Create one folder per sample. Each folder must contain the two recognized
 input filenames; unrelated files are ignored.
 
 ```text
-Catchments/
-├── CatchmentA/
+Samples/
+├── SampleA/
 │   ├── ReferenceDistribution.csv
 │   └── ChronometerData.csv
-└── CatchmentB/
+└── SampleB/
     ├── ReferenceDistribution.csv
     └── ChronometerData.csv
 ```
 
-If either recognized file is missing, that catchment is skipped with a warning.
+For one sample, the selected input folder may itself contain the two CSVs. For
+multiple samples, select their parent folder. The program does not mix these two
+layouts in one run, and it reports incomplete sample folders as input errors.
 
 ## 4. Reference distribution
 
@@ -130,21 +132,21 @@ Open MATLAB in the repository folder:
 
 ```matlab
 addpath(pwd)
-run_detrital_pipeline("Catchments", "Output")
+run_detrital_pipeline("Samples", "Output")
 ```
 
 To restrict the eligible target-component means:
 
 ```matlab
-run_detrital_pipeline("Catchments", "Output", ...
+run_detrital_pipeline("Samples", "Output", ...
     TargetComponentAgeRange=[50 200])
 ```
 
-To apply a reviewed component-count override to one catchment:
+To apply a reviewed component-count override to one sample:
 
 ```matlab
-K_map = containers.Map({'CatchmentC'}, {3});
-run_detrital_pipeline("Catchments", "Output", ...
+K_map = containers.Map({'SampleC'}, {3});
+run_detrital_pipeline("Samples", "Output", ...
     K_override_map=K_map)
 ```
 
@@ -152,7 +154,7 @@ The pipeline records whether K was selected by BIC or supplied manually.
 
 ## 7. Target-component selection
 
-For each catchment, the program:
+For each sample, the program:
 
 1. reads the complete valid reference distribution;
 2. propagates 1σ analytical uncertainties through Monte Carlo sampling;
@@ -217,10 +219,10 @@ patterns to be inspected manually or handled in a downstream model.
 
 ## 10. Outputs
 
-Each catchment receives:
+Each sample receives:
 
 ```text
-CatchmentA/
+SampleA/
 ├── target_component/
 │   ├── target_component_plot.png
 │   └── target_component_summary.csv
@@ -254,10 +256,10 @@ The coded table uses nominal identifiers, not ranks. Always distribute
 Set `run_sensitivity=true` to compare the older edge, midpoint, and younger edge:
 
 ```matlab
-run_detrital_pipeline("Catchments", "Output", run_sensitivity=true)
+run_detrital_pipeline("Samples", "Output", run_sensitivity=true)
 ```
 
-This adds one analysis-level comparison per catchment and one combined summary.
+This adds one analysis-level comparison per sample and one combined summary.
 It does not create three duplicate output-folder trees.
 
 ## 12. Quality-control checklist

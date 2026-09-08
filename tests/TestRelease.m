@@ -17,13 +17,13 @@ classdef TestRelease < matlab.unittest.TestCase
             mkdir(testCase.WorkDir);
             mkdir(testCase.InputDir);
             example_inputs = fullfile(testCase.RepoDir, "examples", "synthetic", "inputs");
-            copyfile(fullfile(example_inputs, "CatchmentA"), ...
-                fullfile(testCase.InputDir, "CatchmentA"));
-            copyfile(fullfile(example_inputs, "CatchmentC"), ...
-                fullfile(testCase.InputDir, "CatchmentC"));
+            copyfile(fullfile(example_inputs, "SampleA"), ...
+                fullfile(testCase.InputDir, "SampleA"));
+            copyfile(fullfile(example_inputs, "SampleC"), ...
+                fullfile(testCase.InputDir, "SampleC"));
             addpath(testCase.RepoDir);
 
-            K_map = containers.Map({'CatchmentC'}, {3});
+            K_map = containers.Map({'SampleC'}, {3});
             run_detrital_pipeline(testCase.InputDir, testCase.OutputDir, ...
                 Kmax=5, ...
                 K_override_map=K_map, ...
@@ -50,9 +50,9 @@ classdef TestRelease < matlab.unittest.TestCase
         end
 
         function returnedFieldNamesMatchPublicTerminology(testCase)
-            catchment_dir = fullfile(testCase.InputDir, "CatchmentA");
+            sample_dir = fullfile(testCase.InputDir, "SampleA");
             result = filter_detrital_thermo( ...
-                fullfile(catchment_dir, "ChronometerData.csv"), ...
+                fullfile(sample_dir, "ChronometerData.csv"), ...
                 fullfile(testCase.WorkDir, "direct_filter_check"), ...
                 [85.4 94.7], WriteOutputs=false);
             testCase.verifyTrue(isfield(result, "filter_results"));
@@ -72,25 +72,63 @@ classdef TestRelease < matlab.unittest.TestCase
 
             pipeline = readtable(fullfile(testCase.OutputDir, "pipeline_summary.csv"), ...
                 Delimiter=",", VariableNamingRule="preserve", TextType="string");
-            c = pipeline(string(pipeline.Catchment) == "CatchmentC", :);
+            c = pipeline(string(pipeline.Sample) == "SampleC", :);
             testCase.verifyEqual(c.K_used, 3);
             testCase.verifyEqual(string(c.K_selection_method), "manual_override");
             testCase.verifyTrue(logical(c.K_override_applied));
         end
 
-        function catchmentOutputsAreConsistent(testCase)
-            catchments = ["CatchmentA", "CatchmentC"];
+        function directSingleSampleLayoutIsSupported(testCase)
+            sample_dir = fullfile(testCase.InputDir, "SampleA");
+            output_dir = fullfile(testCase.WorkDir, "single_sample_output");
+            run_detrital_pipeline(sample_dir, output_dir, ...
+                K_override=3, Nmc=2);
+
+            pipeline = readtable(fullfile(output_dir, "pipeline_summary.csv"), ...
+                Delimiter=",", VariableNamingRule="preserve", TextType="string");
+            testCase.verifyEqual(height(pipeline), 1);
+            testCase.verifyEqual(string(pipeline.Sample), "SampleA");
+            testCase.verifyTrue(isfile(fullfile(output_dir, "SampleA", ...
+                "filter_output", "model_input_ages.csv")));
+        end
+
+        function incompleteSingleSampleIsRejected(testCase)
+            input_dir = fullfile(testCase.WorkDir, "incomplete_sample");
+            mkdir(input_dir);
+            copyfile(fullfile(testCase.InputDir, "SampleA", ...
+                "ReferenceDistribution.csv"), input_dir);
+            testCase.verifyError(@() run_detrital_pipeline(input_dir, ...
+                fullfile(testCase.WorkDir, "incomplete_output")), ...
+                "DetritalChronFilter:IncompleteSample");
+        end
+
+        function ambiguousSampleLayoutIsRejected(testCase)
+            input_dir = fullfile(testCase.WorkDir, "ambiguous_samples");
+            mkdir(input_dir);
+            copyfile(fullfile(testCase.InputDir, "SampleA", ...
+                "ReferenceDistribution.csv"), input_dir);
+            copyfile(fullfile(testCase.InputDir, "SampleA", ...
+                "ChronometerData.csv"), input_dir);
+            copyfile(fullfile(testCase.InputDir, "SampleC"), ...
+                fullfile(input_dir, "SampleC"));
+            testCase.verifyError(@() run_detrital_pipeline(input_dir, ...
+                fullfile(testCase.WorkDir, "ambiguous_output")), ...
+                "DetritalChronFilter:AmbiguousInputLayout");
+        end
+
+        function sampleOutputsAreConsistent(testCase)
+            samples = ["SampleA", "SampleC"];
             required = ["filter_results_full.csv", "filter_results_coded.csv", ...
                 "model_input_ages.csv", "excluded_ages.csv", ...
                 "review_flags.csv", "output_summary.csv"];
             lookup = readtable(fullfile(testCase.OutputDir, "filter_code_lookup.csv"), ...
                 Delimiter=",", VariableNamingRule="preserve", TextType="string");
 
-            for catchment = catchments
-                filter_dir = fullfile(testCase.OutputDir, catchment, "filter_output");
+            for sample = samples
+                filter_dir = fullfile(testCase.OutputDir, sample, "filter_output");
                 for name = required
                     testCase.verifyTrue(isfile(fullfile(filter_dir, name)), ...
-                        "Missing catchment output: " + name);
+                        "Missing sample output: " + name);
                 end
                 testCase.verifyEqual(numel(dir(fullfile(filter_dir, "*.csv"))), 6);
 
@@ -160,13 +198,13 @@ classdef TestRelease < matlab.unittest.TestCase
                 testCase.verifyEqual(coded.ReferenceResultID, expected_reference_ids);
                 testCase.verifyEqual(coded.ReviewFlagID, expected_review_ids);
 
-                component_dir = fullfile(testCase.OutputDir, catchment, ...
+                component_dir = fullfile(testCase.OutputDir, sample, ...
                     "target_component");
                 testCase.verifyTrue(isfile(fullfile(component_dir, ...
                     "target_component_plot.png")));
                 testCase.verifyTrue(isfile(fullfile(component_dir, ...
                     "target_component_summary.csv")));
-                testCase.verifyTrue(isfile(fullfile(testCase.OutputDir, catchment, ...
+                testCase.verifyTrue(isfile(fullfile(testCase.OutputDir, sample, ...
                     "sensitivity", "reference_boundary_comparison.csv")));
             end
         end
@@ -200,7 +238,7 @@ classdef TestRelease < matlab.unittest.TestCase
         end
 
         function referenceSystemLabelIsGeneric(testCase)
-            source = fullfile(testCase.InputDir, "CatchmentA", ...
+            source = fullfile(testCase.InputDir, "SampleA", ...
                 "ReferenceDistribution.csv");
             T = readtable(source, Delimiter=",", TextType="string");
             T.ReferenceSystem(:) = "RutileUPb";

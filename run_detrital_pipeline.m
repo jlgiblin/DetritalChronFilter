@@ -1,12 +1,12 @@
-function run_detrital_pipeline(catchments_root, outdir_root, opts)
+function run_detrital_pipeline(samples_root, outdir_root, opts)
 % RUN_DETRITAL_PIPELINE
-% Discovers all catchment subfolders under catchments_root, runs
-% infer_target_component then filter_detrital_thermo for each,
-% and writes cross-catchment summary and sensitivity CSVs.
+% Processes one sample folder directly or discovers multiple sample
+% subfolders under samples_root. Runs infer_target_component followed by
+% filter_detrital_thermo and writes cross-sample summaries.
 % Public outputs use observation-based screening terminology. Geological
 % interpretations remain separate from the computed classifications.
 %
-% Expected files in each catchment folder:
+% Expected files in each sample folder:
 %   ReferenceDistribution.csv  complete distribution used for GMM fitting
 %   ChronometerData.csv        any number of chronometer systems, long format
 %
@@ -16,9 +16,9 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 %   <outdir_root>/
 %     README.txt
 %     pipeline_summary.csv          — target-component window + GMM statistics
-%     output_summary.csv            — age ranges and counts by catchment and chronometer
+%     output_summary.csv            — age ranges and counts by sample and chronometer
 %     filter_code_lookup.csv        — code definitions written once per run
-%     <CatchmentName>/
+%     <SampleName>/
 %       target_component/           — GMM plot and component summary
 %       filter_output/              — older-bound reference (default)
 %         filter_results_full.csv   — complete one-date-per-row review table
@@ -37,15 +37,16 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 % -----------------------------------------------------------------------
 % USAGE
 % -----------------------------------------------------------------------
-%   run_detrital_pipeline("Catchments", "Output")
-%   run_detrital_pipeline("Catchments", "Output", P_thresh=0.50, Delta=12)
+%   run_detrital_pipeline("Samples", "Output")
+%   run_detrital_pipeline("Samples/SampleA", "Output")
+%   run_detrital_pipeline("Samples", "Output", P_thresh=0.50, Delta=12)
 %
 % -----------------------------------------------------------------------
 % OPTIONS  (name-value)
 % -----------------------------------------------------------------------
 %   Kmax            max K to test in BIC selection (default 6)
-%   K_override      if >0, use this K for ALL catchments (skip BIC)
-%   K_override_map  containers.Map of catchment name -> K override
+%   K_override      if >0, use this K for ALL samples (skip BIC)
+%   K_override_map  containers.Map of sample name -> K override
 %                   e.g. containers.Map({"TC","RC"},{3,4})
 %   Delta           short paired-age interval threshold
 %   P_thresh        screening decision probability (default 0.65)
@@ -67,7 +68,7 @@ function run_detrital_pipeline(catchments_root, outdir_root, opts)
 %   reference mode   older     younger         More grains older than reference
 
 arguments
-    catchments_root  (1,1) string  = "Catchments"
+    samples_root     (1,1) string  = "Samples"
     outdir_root      (1,1) string  = "Output"
     opts.Kmax             (1,1) double  = 6
     opts.K_override       (1,1) double  = 0
@@ -81,25 +82,19 @@ arguments
     opts.run_sensitivity  (1,1) logical = false
 end
 
-if ~isfolder(catchments_root)
-    error("Catchments root folder not found: %s", catchments_root);
+if ~isfolder(samples_root)
+    error("Samples root folder not found: %s", samples_root);
 end
 target_age_range = resolve_target_age_range(opts.TargetComponentAgeRange);
+
+% ---- Discover one direct sample or multiple sample subfolders ----
+[sample_names, sample_dirs, input_layout] = discover_samples(samples_root);
+fprintf("Found %d sample(s) using %s layout: %s\n", numel(sample_names), ...
+    input_layout, strjoin(sample_names, ", "));
+
 if ~isfolder(outdir_root), mkdir(outdir_root); end
-
-% Write README on every run so it stays current with the parameters used.
+% Write README on every valid run so it stays current with the parameters used.
 write_readme(outdir_root, opts);
-
-% ---- Discover catchment subfolders ----
-entries = dir(catchments_root);
-is_dot  = strcmp({entries.name}, '.') | strcmp({entries.name}, '..');
-catchment_names = string({entries([entries.isdir] & ~is_dot).name});
-
-if isempty(catchment_names)
-    error("No subfolders found in %s", catchments_root);
-end
-fprintf("Found %d catchment(s): %s\n", numel(catchment_names), ...
-    strjoin(catchment_names, ", "));
 
 % ---- Modes to run ----
 if opts.run_sensitivity
@@ -109,43 +104,31 @@ else
 end
 
 % ---- Storage ----
-summary_rows = cell(numel(catchment_names), 1);
-% results_store{i, mi} = one-date-per-row results for catchment i, mode mi
-results_store = cell(numel(catchment_names), numel(modes));
-output_summary_rows = cell(numel(catchment_names), 1);
+summary_rows = cell(numel(sample_names), 1);
+% results_store{i, mi} = one-date-per-row results for sample i, mode mi
+results_store = cell(numel(sample_names), numel(modes));
+output_summary_rows = cell(numel(sample_names), 1);
 code_lookup = table();
 
-% ---- Per-catchment loop ----
-for i = 1:numel(catchment_names)
-    cname = catchment_names(i);
-    cdir  = fullfile(catchments_root, cname);
+% ---- Per-sample loop ----
+for i = 1:numel(sample_names)
+    sample_name = sample_names(i);
+    sample_dir = sample_dirs(i);
 
-    fprintf("\n=== Processing catchment: %s ===\n", cname);
+    fprintf("\n=== Processing sample: %s ===\n", sample_name);
 
     % -- File paths --
-    f_reference = fullfile(cdir, "ReferenceDistribution.csv");
-    f_chronometers = fullfile(cdir, "ChronometerData.csv");
+    f_reference = fullfile(sample_dir, "ReferenceDistribution.csv");
+    f_chronometers = fullfile(sample_dir, "ChronometerData.csv");
 
-    required = [f_reference, f_chronometers];
-    labels = ["ReferenceDistribution.csv","ChronometerData.csv"];
-    skip = false;
-    for k = 1:numel(required)
-        if ~isfile(required(k))
-            warning("Missing file for catchment %s: %s — skipping.", cname, labels(k));
-            summary_rows{i} = make_error_row(cname);
-            skip = true; break
-        end
-    end
-    if skip, continue; end
-
-    % -- Determine K for this catchment --
+    % -- Determine K for this sample --
     K_use = opts.K_override;
-    if ~isempty(opts.K_override_map) && isKey(opts.K_override_map, char(cname))
-        K_use = opts.K_override_map(char(cname));
-        fprintf("  Using manual K override = %d for %s\n", K_use, cname);
+    if ~isempty(opts.K_override_map) && isKey(opts.K_override_map, char(sample_name))
+        K_use = opts.K_override_map(char(sample_name));
+        fprintf("  Using manual K override = %d for %s\n", K_use, sample_name);
     end
 
-    % -- Step 1: infer target component (once per catchment) --
+    % -- Step 1: infer target component (once per sample) --
     try
         target_opts = {"Kmax", opts.Kmax, "Nmc", opts.Nmc, ...
                       "BoundsMethod", opts.BoundsMethod, "NSigma", opts.NSigma, ...
@@ -154,7 +137,7 @@ for i = 1:numel(catchment_names)
             target_opts = [target_opts, {"K_override", K_use}]; %#ok<AGROW>
         end
         target = infer_target_component(f_reference, ...
-            fullfile(outdir_root, cname, "target_component"), target_opts{:});
+            fullfile(outdir_root, sample_name, "target_component"), target_opts{:});
         fprintf("  Target-component age window: %.1f - %.1f Ma  (K=%d, selection=%s)\n", ...
             target.target_window_Ma(1), target.target_window_Ma(2), ...
             target.K_used, target.K_selection_method);
@@ -163,8 +146,8 @@ for i = 1:numel(catchment_names)
             target.target_component_mean_Ma, target.NSigma_used, ...
             target.target_component_sigma_Ma);
     catch ME
-        warning("Target-component inference failed for %s: %s", cname, ME.message);
-        summary_rows{i} = make_error_row(cname);
+        warning("Target-component inference failed for %s: %s", sample_name, ME.message);
+        summary_rows{i} = make_error_row(sample_name);
         continue
     end
 
@@ -173,7 +156,7 @@ for i = 1:numel(catchment_names)
     for mi = 1:numel(modes)
         mode = modes(mi);
         is_primary = mi == 1;
-        cout = fullfile(outdir_root, cname, "filter_output");
+        cout = fullfile(outdir_root, sample_name, "filter_output");
         try
             mode_results{mi} = filter_detrital_thermo( ...
                 f_chronometers, cout, target.target_window_Ma, ...
@@ -185,22 +168,22 @@ for i = 1:numel(catchment_names)
 
             results_store{i, mi} = mode_results{mi}.filter_results;
             if is_primary
-                catchment_summary = addvars( ...
+                sample_summary = addvars( ...
                     mode_results{mi}.output_summary, ...
-                    repmat(cname, height(mode_results{mi}.output_summary), 1), ...
-                    'Before', 1, 'NewVariableNames', 'Catchment');
-                output_summary_rows{i} = catchment_summary;
+                    repmat(sample_name, height(mode_results{mi}.output_summary), 1), ...
+                    'Before', 1, 'NewVariableNames', 'Sample');
+                output_summary_rows{i} = sample_summary;
                 if isempty(code_lookup)
                     code_lookup = mode_results{mi}.code_lookup;
                 end
             end
         catch ME
-            warning("Filtering failed for %s (mode=%s): %s", cname, mode, ME.message);
+            warning("Filtering failed for %s (mode=%s): %s", sample_name, mode, ME.message);
         end
     end
 
     if opts.run_sensitivity && all(~cellfun(@isempty, mode_results))
-        sensitivity_dir = fullfile(outdir_root, cname, "sensitivity");
+        sensitivity_dir = fullfile(outdir_root, sample_name, "sensitivity");
         if ~isfolder(sensitivity_dir), mkdir(sensitivity_dir); end
         boundary_comparison = build_reference_boundary_comparison( ...
             mode_results{1}.filter_results, ...
@@ -211,7 +194,7 @@ for i = 1:numel(catchment_names)
     end
 
     % -- Collect target-component summary row --
-    summary_rows{i} = table(cname, target.reference_system, ...
+    summary_rows{i} = table(sample_name, target.reference_system, ...
         target.target_window_Ma(1), target.target_window_Ma(2), ...
         target.target_component_mean_Ma, target.target_component_sigma_Ma, ...
         target.target_component_weight, target.candidate_model_start_Ma, ...
@@ -220,7 +203,7 @@ for i = 1:numel(catchment_names)
         target.target_component_age_range(2), target.K_used, target.K_bic, ...
         string(target.K_selection_method), target.K_override_applied, ...
         target.Nages, target.Nselected, ...
-        'VariableNames', {'Catchment','ReferenceSystem', ...
+        'VariableNames', {'Sample','ReferenceSystem', ...
         'target_window_lo_Ma','target_window_hi_Ma', ...
         'target_component_mean_Ma','target_component_sigma_Ma','target_component_weight', ...
         'candidate_model_start_Ma','NSigma','BoundsMethod', ...
@@ -239,7 +222,7 @@ if ~isempty(valid_rows)
     fprintf("\nPipeline summary written to: %s\n", ...
         fullfile(outdir_root, "pipeline_summary.csv"));
 else
-    warning("No catchments processed successfully.");
+    warning("No samples processed successfully.");
     return
 end
 
@@ -254,7 +237,7 @@ end
 
 % ---- Build and write sensitivity table ----
 if opts.run_sensitivity && numel(modes) > 1
-    sens_tbl = build_sensitivity_table(catchment_names, modes, results_store);
+    sens_tbl = build_sensitivity_table(sample_names, modes, results_store);
     if ~isempty(sens_tbl)
         sens_path = fullfile(outdir_root, "reference_boundary_sensitivity_summary.csv");
         writetable(sens_tbl, sens_path);
@@ -315,15 +298,15 @@ end
 % =======================================================================
 % SENSITIVITY TABLE BUILDER
 % =======================================================================
-function tbl = build_sensitivity_table(catchment_names, modes, results_store)
-% For each catchment x chronometer, report the actual boundary ages and the
+function tbl = build_sensitivity_table(sample_names, modes, results_store)
+% For each sample x chronometer, report the actual boundary ages and the
 % resulting number of model-input dates. No qualitative sensitivity label
 % is assigned; users see the direct numerical effect of each choice.
 
 rows = {};
 
-for i = 1:numel(catchment_names)
-    cname = catchment_names(i);
+for i = 1:numel(sample_names)
+    sample_name = sample_names(i);
 
     primary = results_store{i, 1};
     if isempty(primary), continue; end
@@ -356,13 +339,13 @@ for i = 1:numel(catchment_names)
         end
 
         rows{end+1} = table( ...
-            cname, chrono, n_total, ...
+            sample_name, chrono, n_total, ...
             boundary_vals(1), n_primary, ...
             boundary_vals(3), n_midpoint, ...
             boundary_vals(2), n_younger, ...
             primary_minus_younger, primary_minus_younger_pct_total, ...
             'VariableNames', { ...
-                'Catchment', 'Chronometer', 'TotalDatedAnalyses', ...
+                'Sample', 'Chronometer', 'TotalDatedAnalyses', ...
                 'PrimaryOlderBoundary_Ma', 'ModelInputs_PrimaryOlderBoundary', ...
                 'MidpointBoundary_Ma', 'ModelInputs_Midpoint', ...
                 'YoungerBoundary_Ma', 'ModelInputs_YoungerBoundary', ...
@@ -375,7 +358,7 @@ if isempty(rows)
     return
 end
 
-tbl = sortrows(vertcat(rows{:}), {'Catchment','Chronometer'});
+tbl = sortrows(vertcat(rows{:}), {'Sample','Chronometer'});
 
 end
 
@@ -388,12 +371,12 @@ if isempty(tbl), return; end
 
 fprintf("\n--- Reference-boundary comparison (model-input counts) ---\n");
 fprintf("  %-10s  %-12s  %7s  %9s  %9s  %9s  %9s\n", ...
-    "Catchment", "Chronometer", "N_total", "Primary", "Midpoint", "Younger", "Difference");
+    "Sample", "Chronometer", "N_total", "Primary", "Midpoint", "Younger", "Difference");
 fprintf("  %s\n", repmat('-', 1, 78));
 
 for r = 1:height(tbl)
     fprintf("  %-10s  %-12s  %7d  %9d  %9d  %9d  %+9d\n", ...
-        tbl.Catchment(r), tbl.Chronometer(r), tbl.TotalDatedAnalyses(r), ...
+        tbl.Sample(r), tbl.Chronometer(r), tbl.TotalDatedAnalyses(r), ...
         tbl.ModelInputs_PrimaryOlderBoundary(r), tbl.ModelInputs_Midpoint(r), ...
         tbl.ModelInputs_YoungerBoundary(r), tbl.PrimaryMinusYounger_Count(r));
 end
@@ -404,10 +387,76 @@ end
 % =======================================================================
 % HELPERS
 % =======================================================================
-function row = make_error_row(cname)
-row = table(cname, "failed", NaN, NaN, NaN, NaN, NaN, NaN, NaN, "failed", ...
+function [sample_names, sample_dirs, layout] = discover_samples(samples_root)
+% Accept either one sample directly or multiple samples in subfolders.
+reference_name = "ReferenceDistribution.csv";
+chronometer_name = "ChronometerData.csv";
+root_has_reference = isfile(fullfile(samples_root, reference_name));
+root_has_chronometers = isfile(fullfile(samples_root, chronometer_name));
+
+entries = dir(samples_root);
+is_dot = strcmp({entries.name}, '.') | strcmp({entries.name}, '..');
+subfolders = entries([entries.isdir] & ~is_dot);
+subfolder_names = string({subfolders.name});
+subfolder_dirs = fullfile(samples_root, subfolder_names);
+sub_has_reference = false(size(subfolder_dirs));
+sub_has_chronometers = false(size(subfolder_dirs));
+for i = 1:numel(subfolder_dirs)
+    sub_has_reference(i) = isfile(fullfile(subfolder_dirs(i), reference_name));
+    sub_has_chronometers(i) = isfile(fullfile(subfolder_dirs(i), chronometer_name));
+end
+sub_has_any_input = sub_has_reference | sub_has_chronometers;
+
+if root_has_reference || root_has_chronometers
+    if ~(root_has_reference && root_has_chronometers)
+        error("DetritalChronFilter:IncompleteSample", ...
+            "Single-sample folder %s must contain both %s and %s.", ...
+            samples_root, reference_name, chronometer_name);
+    end
+    if any(sub_has_any_input)
+        error("DetritalChronFilter:AmbiguousInputLayout", ...
+            "Ambiguous input layout in %s: recognized files occur both " + ...
+            "directly and in sample subfolders. Use one layout per run.", ...
+            samples_root);
+    end
+    normalized_root = char(samples_root);
+    while numel(normalized_root) > 1 && normalized_root(end) == filesep
+        normalized_root(end) = [];
+    end
+    [~, root_name] = fileparts(normalized_root);
+    if isempty(root_name)
+        root_name = "Sample";
+    end
+    sample_names = string(root_name);
+    sample_dirs = samples_root;
+    layout = "single-sample";
+    return
+end
+
+incomplete = xor(sub_has_reference, sub_has_chronometers);
+if any(incomplete)
+    bad_name = subfolder_names(find(incomplete, 1));
+    error("DetritalChronFilter:IncompleteSample", ...
+        "Sample folder %s is incomplete. Each sample must contain both %s and %s.", ...
+        bad_name, reference_name, chronometer_name);
+end
+
+valid = sub_has_reference & sub_has_chronometers;
+sample_names = subfolder_names(valid);
+sample_dirs = subfolder_dirs(valid);
+if isempty(sample_names)
+    error("DetritalChronFilter:NoSampleInputs", ...
+        "No valid sample inputs found in %s. Supply both recognized CSVs " + ...
+        "directly or place them together in each sample subfolder.", ...
+        samples_root);
+end
+layout = "multi-sample";
+end
+
+function row = make_error_row(sample_name)
+row = table(sample_name, "failed", NaN, NaN, NaN, NaN, NaN, NaN, NaN, "failed", ...
     NaN, NaN, NaN, NaN, "failed", false, NaN, NaN, ...
-    'VariableNames', {'Catchment','ReferenceSystem', ...
+    'VariableNames', {'Sample','ReferenceSystem', ...
     'target_window_lo_Ma','target_window_hi_Ma', ...
     'target_component_mean_Ma','target_component_sigma_Ma','target_component_weight', ...
     'candidate_model_start_Ma','NSigma','BoundsMethod', ...
@@ -429,7 +478,7 @@ fprintf(fid, "================================================================\n
 
 fprintf(fid, "Generated by run_detrital_pipeline.m\n");
 fprintf(fid, "Date: %s\n", datestr(now, "yyyy-mm-dd HH:MM:SS")); %#ok<TNOW1,DATST>
-fprintf(fid, "Terminology version: neutral-v5-named-full-and-coded\n\n");
+fprintf(fid, "Terminology version: sample-generic-v1\n\n");
 
 fprintf(fid, "INTERPRETATION POLICY\n");
 fprintf(fid, "---------------------\n");
@@ -440,7 +489,7 @@ fprintf(fid, "but do not independently establish a thermal mechanism or bad anal
 
 fprintf(fid, "WHICH FILES TO USE\n");
 fprintf(fid, "------------------\n");
-fprintf(fid, "Each catchment has one filter_output folder with six tables:\n");
+fprintf(fid, "Each sample has one filter_output folder with six tables:\n");
 fprintf(fid, "  filter_results_full.csv\n");
 fprintf(fid, "    All dated analyses, one date per row. Paired dates share GrainID\n");
 fprintf(fid, "    and PairID. This version includes full explanations for review.\n");
@@ -466,14 +515,14 @@ fprintf(fid, "Run-level tables are written once at the output root:\n");
 fprintf(fid, "  pipeline_summary.csv, output_summary.csv, filter_code_lookup.csv\n\n");
 if opts.run_sensitivity
     fprintf(fid, "Optional reference-boundary sensitivity:\n");
-    fprintf(fid, "  <CatchmentName>/sensitivity/reference_boundary_comparison.csv\n");
+    fprintf(fid, "  <SampleName>/sensitivity/reference_boundary_comparison.csv\n");
     fprintf(fid, "  reference_boundary_sensitivity_summary.csv\n");
     fprintf(fid, "    Actual boundary ages and model-input counts for the primary older\n");
     fprintf(fid, "    edge, midpoint, and younger edge are placed side by side;\n");
     fprintf(fid, "    no duplicate per-mode result folders are created.\n\n");
 end
 fprintf(fid, "Target-component QA:\n");
-fprintf(fid, "  <CatchmentName>/target_component/\n");
+fprintf(fid, "  <SampleName>/target_component/\n");
 fprintf(fid, "    BIC curve and GMM fit to ReferenceDistribution.csv. Inspect K\n");
 fprintf(fid, "    selection and target-component interpretation before use.\n\n");
 

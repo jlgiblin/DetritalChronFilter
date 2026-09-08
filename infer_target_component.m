@@ -66,11 +66,11 @@ function out = infer_target_component(reference_csv, outdir, opts)
 % -----------------------------------------------------------------------
 % USAGE
 % -----------------------------------------------------------------------
-%   out = infer_target_component("CatchmentA/ReferenceDistribution.csv", "CatchmentA/QA")
-%   out = infer_target_component("CatchmentA/ReferenceDistribution.csv", "CatchmentA/QA", NSigma=1.5)
-%   out = infer_target_component("CatchmentA/ReferenceDistribution.csv", "CatchmentA/QA", K_override=3)
-%   out = infer_target_component("CatchmentA/ReferenceDistribution.csv", "CatchmentA/QA", BoundsMethod="quantile")
-%   out = infer_target_component("CatchmentA/ReferenceDistribution.csv", "CatchmentA/QA", ...
+%   out = infer_target_component("SampleA/ReferenceDistribution.csv", "SampleA/QA")
+%   out = infer_target_component("SampleA/ReferenceDistribution.csv", "SampleA/QA", NSigma=1.5)
+%   out = infer_target_component("SampleA/ReferenceDistribution.csv", "SampleA/QA", K_override=3)
+%   out = infer_target_component("SampleA/ReferenceDistribution.csv", "SampleA/QA", BoundsMethod="quantile")
+%   out = infer_target_component("SampleA/ReferenceDistribution.csv", "SampleA/QA", ...
 %       TargetComponentAgeRange=[50 200])
 
 arguments

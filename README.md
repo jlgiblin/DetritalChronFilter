@@ -8,7 +8,7 @@ Current release candidate: **v0.1.0-rc2**.
 
 ## What the program does
 
-For each catchment, DetritalChronFilter:
+For each sample, DetritalChronFilter:
 
 1. fits Gaussian mixture models to the complete reference age distribution;
 2. selects the youngest eligible component, using BIC or a documented manual K;
@@ -33,17 +33,21 @@ mineral type, closure temperature, kinetics, or expected age order from a label.
 
 ## Input layout
 
-Each catchment folder contains two CSV files:
+For multiple samples, each sample folder contains two CSV files:
 
 ```text
-Catchments/
-├── CatchmentA/
+Samples/
+├── SampleA/
 │   ├── ReferenceDistribution.csv
 │   └── ChronometerData.csv
-└── CatchmentB/
+└── SampleB/
     ├── ReferenceDistribution.csv
     └── ChronometerData.csv
 ```
+
+For one sample, users may either retain that structure or pass the sample folder
+itself. The program accepts the two files directly when both occur in the
+selected folder. It does not mix direct files and sample subfolders in one run.
 
 ### `ReferenceDistribution.csv`
 
@@ -105,13 +109,19 @@ Open MATLAB in the repository folder and add it to the path:
 
 ```matlab
 addpath(pwd)
-run_detrital_pipeline("Catchments", "Output")
+run_detrital_pipeline("Samples", "Output")
+```
+
+For a single sample whose two CSVs are directly inside `SampleA/`:
+
+```matlab
+run_detrital_pipeline("SampleA", "Output")
 ```
 
 To limit which fitted component means can be selected:
 
 ```matlab
-run_detrital_pipeline("Catchments", "Output", ...
+run_detrital_pipeline("Samples", "Output", ...
     TargetComponentAgeRange=[50 200])
 ```
 
@@ -126,7 +136,7 @@ Output/
 ├── pipeline_summary.csv
 ├── output_summary.csv
 ├── filter_code_lookup.csv
-└── CatchmentA/
+└── SampleA/
     ├── target_component/
     │   ├── target_component_plot.png
     │   └── target_component_summary.csv
@@ -146,9 +156,9 @@ Output/
 | `model_input_ages.csv` | Ages eligible for downstream modeling, including non-excluding review flags |
 | `excluded_ages.csv` | Only model-candidate ages assigned OR1 or OR2 |
 | `review_flags.csv` | All review-flagged rows with the related paired age beside them when available |
-| Catchment `output_summary.csv` | Observed and model-input age ranges and counts for each chronometer |
+| Sample `output_summary.csv` | Observed and model-input age ranges and counts for each chronometer |
 | Root `pipeline_summary.csv` | Reference system, target-component parameters, K selection, and candidate start age |
-| Root `output_summary.csv` | Combined chronometer summaries across catchments |
+| Root `output_summary.csv` | Combined chronometer summaries across samples |
 
 The summary reports observed minimum and maximum ages plus the minimum, median,
 and maximum of the retained model inputs. These descriptive ranges help users
@@ -178,8 +188,8 @@ uncertainty as an internal overlap criterion; this is not a 2σ input convention
 | Option | Default | Meaning |
 |---|---:|---|
 | `Kmax` | `6` | Largest component count evaluated by BIC |
-| `K_override` | `0` | Fixed K for all catchments; zero uses BIC |
-| `K_override_map` | empty | Catchment-specific K values in a `containers.Map` |
+| `K_override` | `0` | Fixed K for all samples; zero uses BIC |
+| `K_override_map` | empty | Sample-specific K values in a `containers.Map` |
 | `TargetComponentAgeRange` | unrestricted | Eligible component-mean range |
 | `BoundsMethod` | `"gmm_sigma_window"` | Target-window method |
 | `NSigma` | `1.0` | Component-standard-deviation multiplier |
