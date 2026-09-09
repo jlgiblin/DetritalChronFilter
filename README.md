@@ -4,7 +4,7 @@ A MATLAB workflow for purpose-specific, probabilistic screening of detrital
 chronometer ages against a selected component of a user-defined reference age
 distribution.
 
-Current release candidate: **v0.1.0-rc2**.
+Current stable release: **v0.1.0**.
 
 ## What the program does
 

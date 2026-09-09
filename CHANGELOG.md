@@ -2,6 +2,11 @@
 
 All notable changes to DetritalChronFilter are documented here.
 
+## 0.1.0 — 2026-09-09
+
+First stable public release. This release promotes the tested `0.1.0-rc2`
+workflow without changing its filtering behavior.
+
 ## 0.1.0-rc2 — 2026-09-07
 
 - Replaces four fixed chronometer files with `ReferenceDistribution.csv`

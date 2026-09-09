@@ -45,8 +45,8 @@ classdef TestRelease < matlab.unittest.TestCase
     end
 
     methods (Test)
-        function versionIsReleaseCandidate(testCase)
-            testCase.verifyEqual(detrital_chron_filter_version(), "0.1.0-rc2");
+        function versionIsStableRelease(testCase)
+            testCase.verifyEqual(detrital_chron_filter_version(), "0.1.0");
         end
 
         function returnedFieldNamesMatchPublicTerminology(testCase)

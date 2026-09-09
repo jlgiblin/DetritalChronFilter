@@ -5,7 +5,7 @@ selected component of a user-defined reference age distribution. It calculates
 age relationships and probabilities; it does not assign a geological mechanism
 to an individual analysis.
 
-This manual describes the `0.1.0-rc2` two-file workflow.
+This manual describes the stable `0.1.0` two-file workflow.
 
 ## 1. Requirements
 

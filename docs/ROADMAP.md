@@ -6,7 +6,7 @@ DetritalChronFilter now uses a generic two-file input design:
 - `ChronometerData.csv` supplies one or more user-labelled chronometer systems in long format.
 - Optional `PairID`, `PairRole`, and `UseForModel` fields support paired-age review and context-only observations without interpreting chronometer names.
 
-The items below are possible future additions, not features of the current release candidate.
+The items below are possible future additions, not features of the current stable release.
 
 ## 1. Additional component-estimation methods
 

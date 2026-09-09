@@ -1,7 +1,7 @@
 function manifest = convert_fixed_inputs_to_two_file(source_root, destination_root)
 % CONVERT_FIXED_INPUTS_TO_TWO_FILE
 % Converts the original four-file DetritalChronFilter input layout into the
-% generic two-file layout used by v0.1.0-rc2.
+% generic two-file layout used by v0.1.0.
 %
 % The source folder may be one sample containing the four files directly,
 % or a parent folder with one subfolder per sample. Source files are read
